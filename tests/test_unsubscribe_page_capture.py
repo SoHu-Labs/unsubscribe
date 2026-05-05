@@ -10,17 +10,18 @@ import pytest
 
 import unsubscribe.unsubscribe_page_capture as unsubscribe_page_capture
 from unsubscribe.unsubscribe_page_capture import (
-    PAGE_CAPTURE_DIR,
     PageCaptureSession,
     UnsubscribePageCategory,
     categorize_unsubscribe_page,
+    page_capture_base_dir,
 )
 
 
-def test_page_capture_dir_is_next_to_src_package() -> None:
-    root = PAGE_CAPTURE_DIR.parent.resolve()
+def test_page_capture_base_dir_is_repo_when_source_layout() -> None:
+    root = page_capture_base_dir().parent.resolve()
     assert (root / "src").is_dir()
-    assert PAGE_CAPTURE_DIR.name == ".unsubscribe_page_capture"
+    assert (root / "pyproject.toml").is_file()
+    assert page_capture_base_dir().name == ".unsubscribe_page_capture"
 
 
 def test_categorize_confirmation_trumps_generic() -> None:
@@ -70,7 +71,11 @@ def test_page_capture_session_create_writes_meta_and_empty_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(unsubscribe_page_capture, "PAGE_CAPTURE_DIR", tmp_path)
+    monkeypatch.setattr(
+        unsubscribe_page_capture,
+        "page_capture_base_dir",
+        lambda: tmp_path,
+    )
     jobs: list[tuple[int | None, str, str, str]] = [
         (2, "Weekly", "Vendor <v@v.com>", "https://u.test/start"),
     ]
@@ -88,7 +93,11 @@ def test_record_snapshot_writes_html_and_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(unsubscribe_page_capture, "PAGE_CAPTURE_DIR", tmp_path)
+    monkeypatch.setattr(
+        unsubscribe_page_capture,
+        "page_capture_base_dir",
+        lambda: tmp_path,
+    )
     monkeypatch.setattr(unsubscribe_page_capture, "PAGE_CAPTURE_SCREENSHOTS", False)
     monkeypatch.setattr(unsubscribe_page_capture, "PAGE_CAPTURE_WAIT_S", 0.0)
     jobs: list[tuple[int | None, str, str, str]] = [

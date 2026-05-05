@@ -11,6 +11,7 @@ from unsubscribe.unsubscribe_oneclick import (
     NoUnsubscribeHeaderError,
     UnsubscribeNotOneClickError,
     UnsubscribePostRedirectError,
+    list_unsubscribe_http_get_url,
     parse_list_unsubscribe,
     try_one_click_unsubscribe,
 )
@@ -52,6 +53,27 @@ def test_parse_list_unsubscribe_bare_urls_without_brackets() -> None:
 def test_parse_list_unsubscribe_case_insensitive_mailto_scheme() -> None:
     raw = "<MAILTO:List@Vendor.COM>"
     assert parse_list_unsubscribe(raw) == ["mailto:List@Vendor.COM"]
+
+
+def test_list_unsubscribe_http_get_url_prefers_https_then_http() -> None:
+    assert (
+        list_unsubscribe_http_get_url(
+            {"List-Unsubscribe": "<http://old.example/u>, <https://new.example/u>"}
+        )
+        == "https://new.example/u"
+    )
+    assert (
+        list_unsubscribe_http_get_url({"List-Unsubscribe": "<http://only.example/u>"})
+        == "http://only.example/u"
+    )
+
+
+def test_list_unsubscribe_http_get_url_skips_mailto() -> None:
+    assert list_unsubscribe_http_get_url({"List-Unsubscribe": "<mailto:x@y.com>"}) is None
+
+
+def test_list_unsubscribe_http_get_url_missing_header() -> None:
+    assert list_unsubscribe_http_get_url({}) is None
 
 
 def test_try_one_click_missing_list_unsubscribe_raises() -> None:

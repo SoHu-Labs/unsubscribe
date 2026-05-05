@@ -12,6 +12,8 @@ from unsubscribe.execution import (
     subscriber_email_for_browser_from_env,
 )
 from unsubscribe.gmail_facade import GmailFacade, GmailHeaderSummary
+from unsubscribe.unsubscribe_link import NoUnsubscribeLinkError
+from unsubscribe.unsubscribe_oneclick import UnsubscribeNotOneClickError
 
 
 def _msg(mid: str, **kw: object) -> GmailHeaderSummary:
@@ -45,7 +47,7 @@ def test_run_automated_one_click_server_ack_plus_browser_rows() -> None:
         "sender": "A <a@list-manage.com>",
         "method": "browser",
         "status": "confirmed",
-        "detail": 'browser → button clicked → "unsubscribed" seen on page ✓',
+        "detail": "browser → unsubscribe confirmation seen on page ✓",
     }
 
     with (
@@ -137,8 +139,45 @@ def test_run_automated_skips_browser_without_debugger_address(capsys) -> None:
     assert len(rows) == 1
     assert rows[0]["status"] == "failed"
     assert rows[0]["method"] == "browser"
-    assert "UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS" in rows[0]["detail"]
+    assert "GOOGLEADS_BROWSER_DEBUGGER_ADDRESS" in rows[0]["detail"]
     assert capsys.readouterr().err == ""
+
+
+def test_run_automated_queues_list_unsubscribe_header_when_body_extract_fails() -> None:
+    """Body allowlist may miss vendor links; List-Unsubscribe still carries HTTPS GET target."""
+    m = _msg("z1", list_unsubscribe="<https://from-header.example/unsub>")
+    facade = GmailFacade(_B())
+    browser_row = {
+        "email_index": 3,
+        "subject": "S",
+        "sender": "A <a@list-manage.com>",
+        "method": "browser",
+        "status": "confirmed",
+        "detail": "ok",
+    }
+    with (
+        patch(
+            "unsubscribe.execution.try_one_click_unsubscribe",
+            side_effect=UnsubscribeNotOneClickError("not advertised"),
+        ),
+        patch("unsubscribe.execution.batch_browser_unsubscribe") as mock_batch,
+        patch(
+            "unsubscribe.execution.extract_unsubscribe_link",
+            side_effect=NoUnsubscribeLinkError("no body"),
+        ),
+    ):
+        mock_batch.return_value = [browser_row]
+        rows = run_automated_unsubscribe(
+            facade,
+            [(3, m)],
+            debugger_address="127.0.0.1:9222",
+            verbose=False,
+        )
+    mock_batch.assert_called_once()
+    jobs = mock_batch.call_args[0][0]
+    assert len(jobs) == 1
+    assert jobs[0][3] == "https://from-header.example/unsub"
+    assert rows[0]["status"] == "confirmed"
 
 
 def test_print_unsubscribe_report_outputs_truthful_footer(capsys) -> None:
@@ -158,7 +197,7 @@ def test_print_unsubscribe_report_outputs_truthful_footer(capsys) -> None:
                 "sender": "news@daily.com",
                 "method": "browser",
                 "status": "confirmed",
-                "detail": 'browser → button clicked → "unsubscribed" seen on page ✓',
+                "detail": "browser → unsubscribe confirmation seen on page ✓",
             },
         ]
     )

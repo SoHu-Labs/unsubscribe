@@ -16,6 +16,7 @@ from unsubscribe.gmail_facade import GmailFacade, GmailHeaderSummary, headers_fr
 from unsubscribe.timed_run import TimedRun, format_progress_line
 from unsubscribe.unsubscribe_link import NoUnsubscribeLinkError, UnsafeLinkError, extract_unsubscribe_link
 from unsubscribe.unsubscribe_oneclick import (
+    list_unsubscribe_http_get_url,
     NoUnsubscribeHeaderError,
     UnsubscribeNotOneClickError,
     UnsubscribePostRedirectError,
@@ -101,7 +102,8 @@ def print_unsubscribe_report(results: list[dict[str, Any]]) -> None:
 
 
 def debugger_address_from_env() -> str | None:
-    raw = (os.environ.get("UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS") or "").strip()
+    """Same debugger env as googleads-invoice-glugglejug (one Brave, one port)."""
+    raw = (os.environ.get("GOOGLEADS_BROWSER_DEBUGGER_ADDRESS") or "").strip()
     return raw or None
 
 
@@ -183,6 +185,7 @@ def run_automated_unsubscribe(
 
         body_url: str | None = None
         extract_err = ""
+        queued_from_list_header = False
         try:
             html = facade.get_message_html(m.id)
             body_url = extract_unsubscribe_link(html)
@@ -190,6 +193,12 @@ def run_automated_unsubscribe(
             extract_err = str(e) or type(e).__name__
         except Exception as e:
             extract_err = str(e) or type(e).__name__
+
+        if not body_url:
+            header_url = list_unsubscribe_http_get_url(headers)
+            if header_url:
+                body_url = header_url
+                queued_from_list_header = True
 
         if not body_url:
             if mailto_hint:
@@ -209,7 +218,10 @@ def run_automated_unsubscribe(
                     m,
                     method="none",
                     status="failed",
-                    detail=extract_err or "No allowlisted unsubscribe link in body.",
+                    detail=(
+                        extract_err
+                        or "No unsubscribe URL from message body or List-Unsubscribe header."
+                    ),
                 )
             if verbose:
                 sq = _subject_preview(m.subject)
@@ -225,9 +237,10 @@ def run_automated_unsubscribe(
         if verbose:
             host = urlparse(body_url).hostname or body_url[:48]
             sq = _subject_preview(m.subject)
+            src = "List-Unsubscribe header" if queued_from_list_header else "body link"
             print(
                 f"    [{pos + 1}/{nsel}] {m.from_} — \"{sq}\" — "
-                f"queued for Brave — {host}.",
+                f"queued for Brave — {host} ({src}).",
                 flush=True,
             )
 
@@ -246,6 +259,12 @@ def run_automated_unsubscribe(
                 ),
                 flush=True,
             )
+            if debugger_address:
+                print(
+                    "    (Page capture runs only with the Brave batch; this run had no messages "
+                    "that needed a browser URL after one-click, body link, and List-Unsubscribe fallback.)\n",
+                    flush=True,
+                )
         return cast(list[dict[str, Any]], results)
 
     if not debugger_address:
@@ -262,7 +281,7 @@ def run_automated_unsubscribe(
         if debugger_address:
             tail = (
                 f"Message analysis complete; {nb} URL(s) queued for Brave "
-                f"(UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS)."
+                f"(GOOGLEADS_BROWSER_DEBUGGER_ADDRESS)."
             )
         else:
             tail = (
@@ -284,7 +303,7 @@ def run_automated_unsubscribe(
                 method="browser",
                 status="failed",
                 detail=(
-                    "browser → ✗ not run: set UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS and start Brave "
+                    "browser → ✗ not run: set GOOGLEADS_BROWSER_DEBUGGER_ADDRESS and start Brave "
                     f"with --remote-debugging-port. URL was: {url[:120]}"
                 ),
             )

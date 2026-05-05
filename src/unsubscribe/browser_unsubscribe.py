@@ -19,6 +19,7 @@ from unsubscribe.live_brave_trace import save_live_brave_trace
 from unsubscribe.page_confirmation_markers import (
     CONFIRMATION_TEXT_MARKERS,
     PREFERENCE_CENTER_SNIPPETS,
+    normalize_text_for_confirmation_match,
 )
 from unsubscribe.timed_run import TimedRun
 from unsubscribe.unsubscribe_page_capture import PageCaptureSession
@@ -67,7 +68,7 @@ def _visible_page_text(driver: WebDriver) -> str:
 
 
 def _page_suggests_unsubscribed_confirmed(driver: WebDriver) -> bool:
-    low = _visible_page_text(driver).lower()
+    low = normalize_text_for_confirmation_match(_visible_page_text(driver))
     return any(m in low for m in _UNSUBSCRIBED_PAGE_MARKERS)
 
 
@@ -248,6 +249,9 @@ def _try_click_unsubscribe_on_page(
     WebDriverWait(driver, 15).until(_page_ready)
     time.sleep(min(settle_s, 3.0))
     _r("after_landing_settled")
+    if _page_suggests_unsubscribed_confirmed(driver):
+        _r("after_already_confirmed_no_clicks_needed")
+        return
 
     _maybe_click_unsubscribe_from_all(driver)
     time.sleep(0.45)
@@ -396,9 +400,7 @@ def batch_browser_unsubscribe(
                             sender,
                             method="browser",
                             status="confirmed",
-                            detail=(
-                                'browser → button clicked → "unsubscribed" seen on page ✓'
-                            ),
+                            detail="browser → unsubscribe confirmation seen on page ✓",
                         )
                     )
                 else:

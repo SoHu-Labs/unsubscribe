@@ -203,7 +203,7 @@ def test_main_check_help() -> None:
 def test_run_check_automation_enter_calls_run_automated(
     capsys, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS", "127.0.0.1:9222")
+    monkeypatch.setenv("GOOGLEADS_BROWSER_DEBUGGER_ADDRESS", "127.0.0.1:9222")
     k = tmp_path / ".unsubscribe_keep.json"
     messages = [
         _msg("m1", from_="X <x@x.com>", subject="S", date="Wed, 10 Jan 2024 12:00:00 +0000"),

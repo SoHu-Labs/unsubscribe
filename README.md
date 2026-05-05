@@ -12,6 +12,20 @@ pip install -e ".[dev]"
 
 The dev extra includes `pytest` and `selenium` (for imports and local automation; CI runs the fast suite only).
 
+### Browser batch (Selenium + Brave) — any machine
+
+This is **optional**: one-click / header-only paths work without a browser. For the **Brave batch** (and page capture under `.unsubscribe_page_capture/`), another developer should:
+
+1. Use the same `**pip install -e ".[dev]"`** (or `**[browser]`** from `pyproject.toml`) so **Selenium** is installed.
+2. Set `**GOOGLEADS_BROWSER_DEBUGGER_ADDRESS`** (e.g. `127.0.0.1:9222`) — **same variable name as sibling project googleads-invoice-glugglejug** — and start Brave with that debug port (see **Quick start** / `**brave-gig`** below, or that repo’s `README` / `docs/REAL_WORKFLOW_AND_PREFLIGHT.md`).
+3. `**browser_helpers.py`** only sets `**debuggerAddress`** and calls `**webdriver.Chrome(options=opts)**`, matching the neighbor’s attach helpers — no `ChromeService`, no `binary_location`, **no changing `PATH`**.
+
+**Chromedriver stderr “147 vs 148” warning:** Selenium often prints that **Homebrew’s `chromedriver`** and the **version string it attributes to “Chrome”** disagree. If the run **continues** and you see steps like *Opening unsubscribe URL … in browser*, attach worked — treat the message like noise, same as the sibling project. **Brave’s Chromium can trail** the newest ChromeDriver line Google publishes.
+
+**Real failure:** `**SessionNotCreatedException`** with “only supports Chrome *N*” vs “Current browser *M*” means **driver major and running Brave major** must be aligned (e.g. `brew upgrade chromedriver` **and/or** Brave until they match **your** live browser).
+
+**About `PATH`:** Nothing in this repo edits your shell profile. A **short-lived mistake** in development **temporarily removed `/opt/homebrew/bin` from `PATH` only inside Python** during `WebDriver` startup; that confused Selenium’s driver choice and **is reverted**. **Do not** strip brew from `PATH` in forks — it is not part of the install story.
+
 ## Credentials
 
 
@@ -65,10 +79,10 @@ The summary is taken from the message body when possible, and skips common **pre
 ### Keep-list file
 
 
-| Item   | Value                                                  |
-| ------ | ------------------------------------------------------ |
-| Path   | `~/.unsubscribe_keep.json` (hardcoded in this version) |
-| Format | JSON object: sender key → `{ "subject", "date_kept" }` — **no email body or web page content** (page snapshots from the Brave batch live under **`.unsubscribe_page_capture/`** in the repo — see `unsubscribe_page_capture.py`). |
+| Item   | Value                                                                                                                                                                                                                                             |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Path   | `~/.unsubscribe_keep.json` (hardcoded in this version)                                                                                                                                                                                            |
+| Format | JSON object: sender key → `{ "subject", "date_kept" }` — **no email body or web page content** (Brave-batch page snapshots live under `**.unsubscribe_page_capture/`**; see README / `page_capture_base_dir()` in `unsubscribe_page_capture.py`). |
 
 
 ### Exit codes
@@ -83,20 +97,31 @@ The summary is taken from the message body when possible, and skips common **pre
 
 ### Quick start
 
+Use the `**unsub`** shell alias from `~/.bash_aliases`: same shape as `**send-gig`** — `**brave-gig`**, `**sleep 3**`, `**mamba activate**` …, then the real entrypoint (`**&& googleads-invoice run-month**` vs `**&& cd "$unsub" && unsubscribe**`). The tool reads `**GOOGLEADS_BROWSER_DEBUGGER_ADDRESS**` (shared with **googleads-invoice-glugglejug**).
+
 ```bash
 export GOOGLE_OAUTH_TOKEN="$HOME/.google/oauth_token.json"
+# GOOGLEADS_BROWSER_DEBUGGER_ADDRESS often already in ~/.bash_aliases
 
-# Optional: Brave remote debugging for the browser batch (only if you press Enter on the final automation prompt)
-export UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS=127.0.0.1:9222
+unsub    # brave-gig → sleep 3 → env → cd clone → unsubscribe (default check flow)
 
-unsubscribe
-unsubscribe check
+# Or without the alias:
+mamba activate unsubscribe && cd /path/to/unsubscribe && unsubscribe
 unsubscribe check --days 7
 unsubscribe --help
-unsubscribe check --help
 ```
 
-Start Brave with `--remote-debugging-port=9222` **before** accepting automation if you expect body/browser steps. Example (macOS):
+### Brave + Selenium (workflow)
+
+Installer / chromedriver notes: see **Setup** → *Browser batch (Selenium + Brave) — any machine*.
+
+Selenium **attaches** via `debuggerAddress`; it does not start the browser. `**brave-gig`** is only:
+
+`open -a "Brave Browser" --args --remote-debugging-port=9222`
+
+So `**unsub`** runs `**unsubscribe`** after the same Brave+wait+activate prelude as `**send-gig**`. For browser automation you still need `**GOOGLEADS_BROWSER_DEBUGGER_ADDRESS**` set to the same `host:port` (your aliases typically export it next to `**brave-gig**`).
+
+Direct launch without the alias:
 
 ```bash
 "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
@@ -106,24 +131,25 @@ Start Brave with `--remote-debugging-port=9222` **before** accepting automation 
 ### Automation env (after the single confirmation prompt)
 
 
-| Variable                               | When needed                                                                                                                                                                               |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS` | Required for the **browser** batch (e.g. `127.0.0.1:9222`). If unset, one-click / mailto / body steps still run where possible; extracted browser URLs are skipped with a stderr message. |
-| `UNSUBSCRIBE_SUBSCRIBER_EMAIL`        | Optional; visible empty `type=email` fields on preference-center pages are filled with this address before the main Unsubscribe click.                                                  |
-| `UNSUBSCRIBE_LIVE_BRAVE_TRACE_DIR`     | Optional; directory for HTML+PNG failure traces (default: `~/Downloads`).                                                                                                                 |
-| `RUN_LIVE_BRAVE_TRACE`                 | Optional; set to `1` to enable optional trace dumps in trace helpers.                                                                                                                     |
+| Variable                             | When needed                                                                                                                                                                              |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLEADS_BROWSER_DEBUGGER_ADDRESS` | Same as neighbor repo: required for the **browser** batch here (e.g. `127.0.0.1:9222`). Often already in your shell profile next to `**brave-gig`**. If unset, browser URLs are skipped. |
+| `UNSUBSCRIBE_SUBSCRIBER_EMAIL`       | Optional; visible empty `type=email` fields on preference-center pages are filled with this address before the main Unsubscribe click.                                                   |
+| `UNSUBSCRIBE_LIVE_BRAVE_TRACE_DIR`   | Optional; directory for HTML+PNG failure traces (default: `~/Downloads`).                                                                                                                |
+| `RUN_LIVE_BRAVE_TRACE`               | Optional; set to `1` to enable optional trace dumps in trace helpers.                                                                                                                    |
 
-**Page capture:** When the Brave batch runs, the tool writes format-learning artifacts under **`.unsubscribe_page_capture/session_*`** next to `src/` in this checkout (see module constants in `src/unsubscribe/unsubscribe_page_capture.py`; no extra env toggle). That only happens if the debugger address is set, at least one message needs a browser URL, and you confirm automation — one-click-only runs write **no** capture files.
+
+**Page capture:** When the Brave batch runs, artifacts go under `**.unsubscribe_page_capture/session_`***. From a source checkout, that base folder is the repo root (next to `src/`). From a wheel install, it is `**.unsubscribe_page_capture` in the directory you ran `unsubscribe` from** — `cd` to your clone first if you want captures beside the project. The console log line *Recording pages…* shows the full session path. **There is no capture when every message is handled by one-click POST alone, or when no message ends up with a browser URL** (no allowlisted body link **and** no `http`/`https` target in `List-Unsubscribe`). Otherwise you need the debugger address set, at least one queued browser URL, and automation confirmed.
 
 ### Maintainer tests (markers)
 
 Same gate style as the neighbor repo:
 
 
-| Variable                                                       | Purpose                                                   |
-| -------------------------------------------------------------- | --------------------------------------------------------- |
-| `RUN_E2E=1`                                                    | Enable `@pytest.mark.e2e` locally (skipped in CI).        |
-| `RUN_LIVE_BRAVE=1` plus `UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS` | Enable `@pytest.mark.live_brave` locally (skipped in CI). |
+| Variable                                                     | Purpose                                                   |
+| ------------------------------------------------------------ | --------------------------------------------------------- |
+| `RUN_E2E=1`                                                  | Enable `@pytest.mark.e2e` locally (skipped in CI).        |
+| `RUN_LIVE_BRAVE=1` plus `GOOGLEADS_BROWSER_DEBUGGER_ADDRESS` | Enable `@pytest.mark.live_brave` locally (skipped in CI). |
 
 
 ## Tests

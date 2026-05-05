@@ -21,13 +21,13 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(skip_e2e)
 
     run_live_brave = os.environ.get("RUN_LIVE_BRAVE", "") == "1"
-    brave_addr = (os.environ.get("UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS") or "").strip()
+    brave_addr = (os.environ.get("GOOGLEADS_BROWSER_DEBUGGER_ADDRESS") or "").strip()
     skip_live_brave_ci = pytest.mark.skip(
         reason="live_brave: skipped in CI (needs your Brave + env; see README)",
     )
     skip_live_brave_env = pytest.mark.skip(
         reason=(
-            "live_brave: set RUN_LIVE_BRAVE=1, UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS, "
+            "live_brave: set RUN_LIVE_BRAVE=1, GOOGLEADS_BROWSER_DEBUGGER_ADDRESS, "
             "start Brave with --remote-debugging-port (see README)"
         ),
     )

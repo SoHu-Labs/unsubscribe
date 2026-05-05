@@ -106,6 +106,29 @@ def _mailto_hint(uri: str) -> str:
     return addr or rest
 
 
+def list_unsubscribe_http_get_url(headers: dict[str, str]) -> str | None:
+    """
+    Return the first ``https`` or ``http`` URI from ``List-Unsubscribe``, skipping ``mailto``.
+
+    Prefer ``https`` over ``http`` when both appear (order in the header does not matter).
+
+    Many senders put the real unsubscribe landing page only in this header; the HTML body may
+    use obscure links, non-HTTPS schemes, or no allowlisted host. This URL is suitable for
+    opening in a browser (GET), unlike the one-click path which POSTs.
+    """
+    raw = _header_ci(headers, "List-Unsubscribe")
+    if raw is None or not raw.strip():
+        return None
+    entries = parse_list_unsubscribe(raw)
+    for uri in entries:
+        if uri.lower().startswith("https://"):
+            return uri
+    for uri in entries:
+        if uri.lower().startswith("http://"):
+            return uri
+    return None
+
+
 def try_one_click_unsubscribe(
     headers: dict[str, str],
     *,

@@ -1,10 +1,11 @@
 """Record and categorize unsubscribe landing pages for format learning.
 
 Sessions are created **whenever** ``batch_browser_unsubscribe`` runs — the same moment you already
-attach to Brave via ``UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS`` (no extra env toggle).
+attach to Brave via ``GOOGLEADS_BROWSER_DEBUGGER_ADDRESS`` (no extra env toggle).
 
-Tune behavior with **module constants** below (``PAGE_CAPTURE_DIR``, ``PAGE_CAPTURE_SCREENSHOTS``,
-``PAGE_CAPTURE_WAIT_S``, ``PAGE_CAPTURE_MIN_VISIBLE_CHARS``).
+Tune behavior with **module constants** below (``PAGE_CAPTURE_SCREENSHOTS``,
+``PAGE_CAPTURE_WAIT_S``, ``PAGE_CAPTURE_MIN_VISIBLE_CHARS``). The capture **base directory**
+is chosen by ``page_capture_base_dir()`` (see there).
 
 Each snapshot writes:
 
@@ -12,7 +13,9 @@ Each snapshot writes:
 * ``*.visible.txt`` — full ``document.body.innerText`` (capped), so SPAs and mobile shells still yield readable content.
 * ``manifest.json`` includes a short excerpt; use ``.visible.txt`` for full page copy.
 
-Default ``PAGE_CAPTURE_DIR``: next to ``src/`` in this checkout (parent of the ``src`` package directory).
+Default: **source checkout** → ``<repo>/.unsubscribe_page_capture``; **installed wheel**
+→ ``<current working directory>/.unsubscribe_page_capture`` (run the CLI from your clone
+if you want captures next to the project).
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from unsubscribe.page_confirmation_markers import (
     CONFIRMATION_TEXT_MARKERS,
     PREFERENCE_CENTER_SNIPPETS,
+    normalize_text_for_confirmation_match,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,9 +43,27 @@ logger = logging.getLogger(__name__)
 # One browser job: (email_index, subject, sender_display, url)
 BrowserJobRow = tuple[int | None, str, str, str]
 
+
+def page_capture_base_dir() -> Path:
+    """Directory that will contain ``session_*`` folders.
+
+    * **Running from a source tree** (this file lives under ``…/src/unsubscribe/`` and the
+      repo root has ``pyproject.toml``): ``<repo-root>/.unsubscribe_page_capture``.
+    * **Otherwise** (typical ``site-packages`` install): ``./.unsubscribe_page_capture``
+      relative to the process working directory when the session is created (usually the
+      directory you ran ``unsubscribe`` from).
+    """
+    here = Path(__file__).resolve()
+    if (
+        here.parent.name == "unsubscribe"
+        and here.parent.parent.name == "src"
+        and (here.parent.parent.parent / "pyproject.toml").is_file()
+    ):
+        return (here.parent.parent.parent / ".unsubscribe_page_capture").resolve()
+    return (Path.cwd() / ".unsubscribe_page_capture").resolve()
+
+
 # --- Format-learning capture (no env vars): edit here as needed ---
-# Directory is the repo root that contains ``src/`` (…/unsubscribe/.unsubscribe_page_capture).
-PAGE_CAPTURE_DIR = Path(__file__).resolve().parent.parent.parent / ".unsubscribe_page_capture"
 PAGE_CAPTURE_SCREENSHOTS = True
 PAGE_CAPTURE_WAIT_S = 12.0
 PAGE_CAPTURE_MIN_VISIBLE_CHARS = 80
@@ -155,7 +177,7 @@ def categorize_unsubscribe_page(
 
     Tags are lowercase tokens; the manifest stores both for clustering and future handlers.
     """
-    blob = f"{page_title}\n{text_preview}".lower()
+    blob = normalize_text_for_confirmation_match(f"{page_title}\n{text_preview}")
     html_low = html_excerpt.lower()
 
     tags: list[str] = []
@@ -270,7 +292,7 @@ class PageCaptureSession:
 
     @classmethod
     def create(cls, jobs: list[BrowserJobRow]) -> PageCaptureSession:
-        base = PAGE_CAPTURE_DIR
+        base = page_capture_base_dir()
         base.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         h = hashlib.sha256(
@@ -305,7 +327,11 @@ class PageCaptureSession:
             json.dumps(manifest, indent=2) + "\n",
             encoding="utf-8",
         )
-        logger.info("Unsubscribe page capture session: %s", session_dir)
+        logger.info(
+            "Unsubscribe page capture session: %s (base %s)",
+            session_dir,
+            base,
+        )
         return cls(session_dir)
 
     def record_snapshot(

@@ -160,6 +160,6 @@ def extract_unsubscribe_link(html: str) -> str:
             return href
 
     raise NoUnsubscribeLinkError(
-        "No trustworthy unsubscribe HTTPS link found in the message body. "
-        "Try the browser-assisted flow to complete unsubscribe manually."
+        "No allowlisted HTTPS unsubscribe link found in the message body. "
+        "If the message has a List-Unsubscribe header, the tool will try that URL for the browser batch."
     )

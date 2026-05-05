@@ -31,7 +31,7 @@ def test_no_unsubscribe_link_raises() -> None:
     html = _load_html("newsletter_no_unsubscribe_link.html")
     with pytest.raises(NoUnsubscribeLinkError) as exc:
         extract_unsubscribe_link(html)
-    assert "browser" in str(exc.value).lower()
+    assert "list-unsubscribe" in str(exc.value).lower() or "header" in str(exc.value).lower()
 
 
 def test_ambiguous_links_raise() -> None:

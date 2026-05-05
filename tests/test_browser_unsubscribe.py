@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from unittest.mock import MagicMock, patch
 
 from unsubscribe.browser_unsubscribe import (
@@ -14,6 +15,20 @@ from unsubscribe.browser_unsubscribe import (
     batch_browser_unsubscribe,
     _find_unsubscribe_element,
 )
+
+
+@pytest.fixture(autouse=True)
+def _disable_real_page_capture_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``batch_browser_unsubscribe`` always requests capture; mock driver must not write to repo."""
+    class _NoDiskCapture:
+        @staticmethod
+        def create(_jobs: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "unsubscribe.browser_unsubscribe.PageCaptureSession",
+        _NoDiskCapture,
+    )
 
 
 def _visible_el() -> MagicMock:
@@ -153,6 +168,45 @@ def test_confirmation_detects_dmv_subscriber_list_thank_you_copy() -> None:
         assert _page_suggests_unsubscribed_confirmed(MagicMock()) is True
 
 
+def test_confirmation_detects_linkedin_style_copy_typographic_apostrophe() -> None:
+    """LinkedIn uses ``You've unsubscribed`` / ``You'll no longer receive`` (often U+2019 in DOM)."""
+    copy = (
+        "You\u2019ve unsubscribed You\u2019ll no longer receive emails from LinkedIn about new articles."
+    )
+    with patch(
+        "unsubscribe.browser_unsubscribe._visible_page_text",
+        return_value=copy,
+    ):
+        assert _page_suggests_unsubscribed_confirmed(MagicMock()) is True
+
+
+def test_try_click_skips_interaction_when_landing_already_confirmed() -> None:
+    """One-click URLs can land on a final confirmation page with no unsubscribe control."""
+    with patch("unsubscribe.browser_unsubscribe.time.sleep"):
+        with patch("unsubscribe.browser_unsubscribe.WebDriverWait"):
+            driver = MagicMock()
+            with patch(
+                "unsubscribe.browser_unsubscribe._maybe_click_unsubscribe_from_all",
+            ) as m_all:
+                with patch(
+                    "unsubscribe.browser_unsubscribe._maybe_fill_visible_email_field",
+                ) as m_fill:
+                    with patch(
+                        "unsubscribe.browser_unsubscribe._click_unsubscribe_once_main_or_iframes",
+                    ) as m_click:
+                        with patch(
+                            "unsubscribe.browser_unsubscribe._page_suggests_unsubscribed_confirmed",
+                            return_value=True,
+                        ) as m_conf:
+                            _try_click_unsubscribe_on_page(
+                                driver, settle_s=0.01, subscriber_email=None
+                            )
+    m_conf.assert_called_once()
+    m_all.assert_not_called()
+    m_fill.assert_not_called()
+    m_click.assert_not_called()
+
+
 def test_maybe_click_unsubscribe_from_all_uses_execute_script() -> None:
     """``UnsubscribeFlowCase.UNSUBSCRIBE_FROM_ALL_THEN_CLICK`` — DOM scan + click."""
     driver = MagicMock()
@@ -209,7 +263,7 @@ def test_try_click_runs_pre_steps_then_main_click() -> None:
                     ) as m_click:
                         with patch(
                             "unsubscribe.browser_unsubscribe._page_suggests_unsubscribed_confirmed",
-                            return_value=True,
+                            side_effect=[False, True],
                         ):
                             _try_click_unsubscribe_on_page(
                                 driver, settle_s=0.01, subscriber_email=None
@@ -236,7 +290,7 @@ def test_try_click_fills_email_when_subscriber_email_set() -> None:
                     ):
                         with patch(
                             "unsubscribe.browser_unsubscribe._page_suggests_unsubscribed_confirmed",
-                            return_value=True,
+                            side_effect=[False, True],
                         ):
                             _try_click_unsubscribe_on_page(
                                 driver,
