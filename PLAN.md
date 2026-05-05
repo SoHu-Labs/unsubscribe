@@ -2,6 +2,28 @@
 
 Repo: [https://github.com/SoHu-Labs/unsubscribe](https://github.com/SoHu-Labs/unsubscribe)
 
+## ⛔ READ THIS FIRST — IMPLEMENTATION INSTRUCTIONS
+
+**Do not write any code until you have read this entire plan from top to bottom.**
+Implement iterations **strictly in order** (1 → 2 → 3 → 4 → 5 → 6 → 7).
+Each iteration depends on files created in earlier iterations. Do not skip ahead.
+
+After each iteration, run `pytest -q`. All tests must pass before starting the
+next iteration.
+
+Before copying any file from the neighbor repo, **open and read the source file**
+first. Do not implement from the plan's description — implement from the
+actual source code in `../googleads-invoice-glugglejug/`.
+
+**NEVER do these:**
+
+- Never use `format="metadata"` expecting `snippet` — it's not there.
+- Never copy a file without fixing `from googleads_invoice.` → `from unsubscribe.`.
+- Never rename `GOOGLE_OAUTH_TOKEN` — both projects share one account, one token file.
+- Never count a 200 POST response as "unsubscribed" — it only means "server accepted."
+- Never create a file without verifying `__init__.py` exists in its package.
+- Never skip creating test fixtures before writing production code.
+
 ## Goal
 
 Automatically detect **new newsletter emails that have an unsubscribe link or
@@ -79,10 +101,14 @@ unsubscribe check  (one command)
   │
   ├─ 7. Collect selected: gather unsubscribe URLs/targets for all "u" picks
   │
-  └─ 8. Brave batch-unsubscribe:
-        Open Brave → for each selected email:
-          click unsubscribe link → confirm if needed → next
-        Report: "Unsubscribed from 4 of 4 selected."
+  └─ 8. Execution + per-email report:
+        For each selected email:
+          try one-click POST first → if server responds 2xx:
+            ⚠️  "server accepted (may need further steps)"
+          ↗  if no one-click, extract body link → browser click →
+            wait for confirmation text → ✓ "unsubscribed (page confirmed)"
+          ✗  if browser finds no button / times out → ✗ "failed: (why)"
+        Final summary: per-email status, not a misleading success count.
 ```
 
 ## Stack
@@ -285,7 +311,7 @@ top to bottom as **implementation sequence**.
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **E1 — Foundation & CI**       | Packaging, install path, and `**pytest` + CI** so later work ships with the same checks every merge — catch breakage before it lands.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **E2 — Discover & shortlist**  | **One command** (`unsubscribe check`) that searches Gmail for the **last 3 days**, finds newsletters **that have an unsubscribe link or header**, **removes previously-kept senders** from the local keep-list, and displays a **numbered list** with **title, sender, and short content summary** (~~1 line). **Previously-kept newsletters are shown in a separate list** so you know what won't be asked about.~~ ~~Then an **interactive walkthrough** — each email shown one at a time with a **slightly longer content summary** (~~5 lines) and a single-key prompt: **Enter = keep (saves to keep-list), u/U = mark for unsubscribe**. After the walkthrough, an **end-of-run re-check** asks about each **previously-kept** newsletter — **Enter = keep (default, no change), u/U = unsubscribe now**. The selected subset (from new walkthrough + re-check) is handed to the execution phase. |
-| **E3 — Unsubscribe execution** | After the walkthrough, **Brave browser opens** and **clicks each selected unsubscribe link in sequence** — no manual copy-paste, no tab hunting. The user watches as each link is visited and clicked. If a link can be unsubscribed without a browser (RFC 8058 one-click POST), do that first; use the browser only for links that require it. **Report** at the end: "Unsubscribed from X of Y selected". **Plain, actionable errors** when something can't be automated — no silent failure.                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **E3 — Unsubscribe execution** | After the walkthrough + re-check, a **single confirmation prompt** shows the combined selections and asks: "Press Enter to unsubscribe all N selected [q to quit]". **No per-stage prompts** — one Enter triggers the full chain: one-click POST → body-link extraction → Brave batch-click. Brave opens once and clicks remaining links in sequence.<br>**Report per email, not a single number.** Each row shows which email, which method was tried, and the **exact outcome**. A 200 from a one-click POST does not mean "unsubscribed" — it means "server accepted the request, may require further steps." Only report unsubscription as confirmed when the browser flow detects confirmation text on the page. **Plain, actionable errors** — no silent failure, no misleading counts. |
 
 
 ### Traceability (epics → iterations)
@@ -497,7 +523,7 @@ Expand
 | **Story**               | Header-based **one-click** unsubscribe where the sender advertises it; **clear failure** when the message does not support that path.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | **In scope**            | Parse `List-Unsubscribe` header (RFC 2369) — extract URL(s) and/or mailto:. Detect `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058). For one-click: send `POST` to the unsubscribe URL with body `List-Unsubscribe=One-Click`. Implement as a pure function or small class, fully mocked HTTP in CI (mock `urllib.request` or `httpx`). For `mailto:` arms: detect and print "manual action required: send email to X" — do not send mail in this iteration.                                                                                                                                                                                                                                               |
 | **Out of scope**        | CAPTCHA flows, JavaScript-only preference centers, automated mailto sending, HTML body fallback (Iteration 6). `**unsubscribe check` confirmation or any unsubscribe execution** — Iteration 7 only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| **Acceptance criteria** | No network in CI; wrong/missing headers → typed, actionable errors (e.g. `NoUnsubscribeHeaderError`, `UnsubscribeNotOneClickError`); valid `List-Unsubscribe` + `List-Unsubscribe-Post` → mocked POST verified with correct URL and body; `mailto:` → clear stdout message with the address.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Acceptance criteria** | No network in CI; wrong/missing headers → typed, actionable errors (e.g. `NoUnsubscribeHeaderError`, `UnsubscribeNotOneClickError`); valid `List-Unsubscribe` + `List-Unsubscribe-Post` → mocked POST verified with correct URL and body; `mailto:` → clear stdout message with the address. **Reporting**: result for each attempted one-click must show the HTTP status and a truthful message — "server accepted (200) — may require further steps", not "unsubscribed". Never claim success from a POST response alone. |
 | **Common mistakes**     | (1) Parsing `List-Unsubscribe` naively — the header value can be a **single** URL, a **comma-separated** list, or have angle brackets `<https://...>`. Strip angle brackets but don't assume they're always present. (2) Confusing RFC 2369 (the header itself) with RFC 8058 (the POST method) — `List-Unsubscribe` alone means the URL exists; `List-Unsubscribe-Post: List-Unsubscribe=One-Click` means you can POST to it. Without the Post header, the URL might require a browser. (3) Sending POST with wrong Content-Type — RFC 8058 specifies `application/x-www-form-urlencoded` or nothing. (4) Following redirects automatically on POST — don't. If the POST returns 3xx, report it, don't silently follow. |
 
 
@@ -584,7 +610,7 @@ Expand
 | **Story**               | After the walkthrough completes, **Brave opens** and **clicks each selected unsubscribe link in sequence** — the user watches as each link is visited and the unsubscribe button clicked. No manual copy-paste, no tab hunting. At the end: report "Unsubscribed from X of Y selected." If a link can be handled without the browser (RFC 8058 one-click POST from Iteration 5), do that first and only open Brave for the remaining links.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **In scope**            | (1) **Copy** `browser_download.py` → `src/unsubscribe/browser_helpers.py` — `build_chrome_options_for_remote_debugging()` + `chrome_driver_attach()` only. (2) **Copy structure** from `live_brave_download.py` into `src/unsubscribe/browser_unsubscribe.py` — attach Brave **once**, batch URLs, quit **once**. (3) **Copy** `live_brave_trace.py` → `src/unsubscribe/live_brave_trace.py` (env prefix `UNSUBSCRIBE_…`). (4) `tests/conftest.py` — gating for `@pytest.mark.e2e` / `@pytest.mark.live_brave`; use `**RUN_E2E`** and `**RUN_LIVE_BRAVE`** exactly as the neighbor repo (no rename). (5) README: Brave startup + env var table. (6) **Wire `unsubscribe check` execution:** after the two-group summary, **one** prompt (`Press Enter to unsubscribe all N selected [q to quit]`). On Enter → `try_one_click_unsubscribe` (Iteration 5) per applicable message → `get_message_html` + `extract_unsubscribe_link` (Iteration 6) for those still needing a URL → `batch_browser_unsubscribe` for the rest. **No per-stage prompts.**                                                   |
 | **Out of scope**        | Automating every third-party marketing site reliably. Solving CAPTCHAs. Headless mode (preference centers often require visible browser).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| **Acceptance criteria** | Default `pytest` fast (all browser tests skipped); `RUN_E2E=1` + `UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS=127.0.0.1:9222` enables browser tests on maintainer machine; unit tests mock `WebDriver` and verify: (a) Brave attaches **once** not per-URL, (b) `driver.get(url)` called for each link in order, (c) click called on each found element, (d) `driver.quit()` only after **all** URLs processed, (e) failure on one link continues to next (with error logged, not crash); end-of-run report printed: "Unsubscribed from 7 of 8 selected" with per-link status; README has exact Brave startup command.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Acceptance criteria** | Default `pytest` fast (all browser tests skipped); `RUN_E2E=1` + `UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS=127.0.0.1:9222` enables browser tests on maintainer machine; unit tests mock `WebDriver` and verify: (a) Brave attaches **once** not per-URL, (b) `driver.get(url)` called for each link in order, (c) click called on each found element, (d) `driver.quit()` only after **all** URLs processed, (e) failure on one link continues to next (with error logged, not crash). **Reporting**: per-email status, not a single success count. For browser-confirmed unsubscription: "✓ unsubscribed (page showed 'you have been unsubscribed')". For browser attempt with no confirmation: "⚠ clicked button but no confirmation seen". For failure: "✗ failed: (specific reason)". README has exact Brave startup command. |
 | **Common mistakes**     | (1) Quitting and re-attaching Brave between each link — attach once, batch-process all URLs, quit once. (2) Quitting Brave on a single link failure — log the error, continue to next link. Partial success is expected. (3) Copying selectors verbatim (`text()="Download"`) without changing to unsubscribe text. Change every occurrence to "Unsubscribe", "unsubscribe", "Opt out", "opt-out", "Manage preferences", "manage preferences". (4) Using the IDE's embedded browser instead of the user's Brave — only `debuggerAddress` attach to user's Brave is valid for logged-in sessions. (5) Not handling iframes — some preference centers load in an iframe. Copy neighbor's iframe-switching pattern (`driver.switch_to.frame(...)`) and after clicking, `driver.switch_to.default_content()`. (6) Not saving traces on failure — always save HTML+PNG before moving to next link. (7) Assuming all preference centers have the same confirmation signal — some show a green banner, some change the URL to `/unsubscribed`, some show a modal. Make confirmation detection configurable. |
 
 
@@ -615,7 +641,7 @@ Expand
 - 1. **Copy** `browser_download.py` → `src/unsubscribe/browser_helpers.py`. Fix imports (`from googleads_invoice.` → `from unsubscribe.`). Keep `build_chrome_options_for_remote_debugging()` and `chrome_driver_attach()` as-is. Drop `build_chrome_options()` (fresh browser not needed) and `click_and_wait_for_pdf()` (PDF-specific). Drop `download_dir` prefs (not downloading files).
 - 1. **Copy** `live_brave_trace.py` → `src/unsubscribe/live_brave_trace.py`. Fix imports. Change env var: `GOOGLEADS_LIVE_BRAVE_TRACE_DIR` → `UNSUBSCRIBE_LIVE_BRAVE_TRACE_DIR`.
 - 1. Add to `pyproject.toml` optional dependencies: `selenium`.
-- 1. Create `src/unsubscribe/browser_unsubscribe.py` with `batch_browser_unsubscribe(urls: list[str], *, debugger_address: str, timeout_per_url_s: float = 30) -> dict[str, bool]`. Follow neighbor's per-URL flow but **loop**:
+- 1. Create `src/unsubscribe/browser_unsubscribe.py` with `batch_browser_unsubscribe(urls: list[dict], *, debugger_address: str, timeout_per_url_s: float = 30) -> list[dict]`. Each input dict has `{url, email_index, subject, sender}`. Follow neighbor's per-URL flow but **loop**:
   Attach **once**: `driver = chrome_driver_attach(debugger_address=debugger_address)`
    For each URL:
   - `driver.get(url)`
@@ -627,8 +653,16 @@ Expand
   - Wait for confirmation (text check or URL change)
   - On failure: `save_live_brave_trace(driver, label=f"unsubscribe_{url_hash}")`, record failure, **continue** to next URL
    **Quit once** at end: `driver.quit()` in `finally`
-   Return `{url: True/False, ...}` map
-- 1. In the same file, add `print_unsubscribe_report(results: dict[str, bool])` that prints per-URL status and a summary line: `"Unsubscribed from X of Y selected."`
+   Return list of outcome dicts: `[{email_index, subject, sender, method: "browser", status: "confirmed"|"clicked-no-confirmation"|"failed", detail: str}, ...]`
+- 1. In the same file, add `print_unsubscribe_report(results: list[dict])` that prints a per-email table. Each row: index, subject, sender, method tried (one-click / browser), and **exact outcome** — not "success" or "failed". Format:
+     #2  "Weekly Deals" — deals@shop.example
+         one-click POST → server accepted (200)
+         ⚠ may require further steps (check your inbox)
+     #5  "Daily Brief" — news@daily.com
+         browser → button clicked → "unsubscribed" confirmation seen ✓
+     #7  "Gadget Weekly" — noreply@gadgets.com
+         browser → ✗ failed: no unsubscribe button found on page
+   Then a summary line: "3 attempted: 1 confirmed, 1 server-acknowledged, 1 failed."
 - 1. Write `tests/test_browser_unsubscribe.py` using mocked `WebDriver`. **READ** neighbor's `test_live_brave_download.py` for the mocking pattern, adapted for batch:
   Mock `chrome_driver_attach` returns a single `MagicMock` driver
    Verify `driver.get()` called N times (once per URL)
@@ -636,7 +670,7 @@ Expand
    Verify `driver.quit()` called **exactly once**
    Test failure-continuation: one URL's element not found → error logged, remaining URLs still processed
 - 1. **Copy** `conftest.py` → `tests/conftest.py` from neighbor. Fix imports. Change env var names (`GOOGLEADS_BROWSER_DEBUGGER_ADDRESS` → `UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS`, etc.). Keep CI gating logic identical.
-- 1. Wire into CLI: after walkthrough + re-check, print combined selection summary (two labeled groups), then **one confirmation prompt**: `"Press Enter to unsubscribe all N selected [q to quit]"`. On Enter: run one-click (Iteration 5) for header-capable links → extract body links (Iteration 6) for those without one-click → `batch_browser_unsubscribe()` (Iteration 7) for remaining. **No per-stage prompts** — one Enter, full chain, one final report.
+- 1. Wire into CLI: after walkthrough + re-check, print combined selection summary (two labeled groups), then **one confirmation prompt**: `"Press Enter to unsubscribe all N selected [q to quit]"`. On Enter: for each selected email, try one-click first (if header-capable) → if one-click not available or returns non-2xx, try body-link extraction → if link found, browser click. Collect per-email outcome dicts: `{index, subject, sender, method, status, detail}`. After all emails processed, call `print_unsubscribe_report()`. **No per-stage prompts, no misleading success count.**
 - 1. Write README section "Browser unsubscribe" with: Brave startup command, env var table, and the batch flow description.
 
 **Done when:** `pytest` skips browser tests in CI; unit tests verify batch pattern (attach once, process all, quit once, failure continues); README documents workflow; maintainer can run real batch unsubscribe against their Brave with selected links from the walkthrough.

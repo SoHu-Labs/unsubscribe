@@ -13,7 +13,7 @@ from pathlib import Path
 from unsubscribe.classifier import is_unsubscribable_newsletter
 from unsubscribe.execution import (
     debugger_address_from_env,
-    print_automation_report,
+    print_unsubscribe_report,
     run_automated_unsubscribe,
 )
 from unsubscribe.gmail_api_backend import GmailApiBackend
@@ -241,19 +241,20 @@ def _print_selection_summary(
     new_rows: list[tuple[int, str, str]],
     reconsidered_rows: list[tuple[str, str]],
 ) -> None:
-    """``new_rows``: (walkthrough #, From, Subject). ``reconsidered_rows``: (From, Subject)."""
+    """``new_rows``: (walkthrough #, From, Subject).
+
+    ``reconsidered_rows``: (sender email or key for display, Subject) — re-check picks are not numbered.
+    """
     print()
     print("Selected for unsubscribe:")
     if new_rows:
-        print("  New (from review):")
-        for num, from_, subj in sorted(new_rows, key=lambda t: t[0]):
-            print(f'    #{num}  {from_} — "{subj}"')
+        nums = ", ".join(f"#{n}" for n in sorted({t[0] for t in new_rows}))
+        print(f"  New: {nums}")
     if reconsidered_rows:
-        print("  Reconsidered (was on keep list):")
-        for i, (from_, subj) in enumerate(reconsidered_rows, start=1):
-            print(f'    {i}. {from_} — "{subj}"')
+        inner = ", ".join(f"{sender} ({subj})" for sender, subj in reconsidered_rows)
+        print(f"  Kept (reconsidered): {inner}")
     total = len(new_rows) + len(reconsidered_rows)
-    print(f"  Total: {total}")
+    print(f"  {total} total")
 
 
 def run_check(
@@ -288,7 +289,7 @@ def run_check(
         return 1
 
     all_messages = list(messages)
-    selected_for_unsub: list[GmailHeaderSummary] = []
+    selected_for_unsub: list[tuple[int | None, GmailHeaderSummary]] = []
     try:
         candidates = [
             m
@@ -338,27 +339,24 @@ def run_check(
                     print()
                     while True:
                         action = _prompt_loop(
-                            "  [k] keep  [Enter] skip  [u] unsubscribe  [q] quit walkthrough\n"
+                            "  [Enter] keep  [u] unsubscribe  [q] quit walkthrough\n"
                             "  > ",
                             input_fn=input_fn,
                             valid_empty=True,
                             valid_u=True,
                             valid_q=True,
-                            valid_k=True,
                         )
-                        if action == "k":
+                        if action == "":
                             add_to_keep_list(keep_list_path, m.from_, m.subject)
                             keep_data = load_keep_list(keep_list_path)
                             break
-                        if action == "":
-                            break
                         if action == "u":
                             new_unsub_rows.append((num, m.from_, m.subject))
-                            selected_for_unsub.append(m)
+                            selected_for_unsub.append((num, m))
                             break
                         if action == "q":
                             print(
-                                "(Stopping walkthrough early; prior k-keeps are already saved.)"
+                                "(Stopping walkthrough early; prior keeps from Enter are already saved.)"
                             )
                             stop_walkthrough = True
                             break
@@ -422,20 +420,20 @@ def run_check(
                     print(f"  Kept on: {dk}")
                     print()
                     action = _prompt_loop(
-                        "  [Enter] or [k] keep (no change)  [u] unsubscribe  [q] skip remaining\n"
+                        "  [Enter] keep (no change)  [u] unsubscribe  [q] skip remaining\n"
                         "  > ",
                         input_fn=input_fn,
                         valid_empty=True,
                         valid_u=True,
                         valid_q=True,
-                        valid_k=True,
                     )
-                    if action in ("", "k"):
+                    if action == "":
                         continue
                     if action == "u":
-                        reconsidered_selected.append((display_from, subj))
+                        sk_disp = sender_key(display_from) or display_from
+                        reconsidered_selected.append((sk_disp, subj))
                         if resolved is not None:
-                            selected_for_unsub.append(resolved)
+                            selected_for_unsub.append((None, resolved))
                         else:
                             print(
                                 f"(No message in this search window matched kept sender {sk!r}; "
@@ -453,19 +451,10 @@ def run_check(
         _print_selection_summary(new_unsub_rows, reconsidered_selected)
 
         if selected_for_unsub and not skip_automation:
-            print(
-                "Order of operations: List-Unsubscribe one-click HTTP first for each message, "
-                "then a browser step only for messages that still have an allowlisted unsubscribe "
-                "URL and no successful one-click. Brave is not opened when one-click alone succeeds. "
-                "For browser steps, start Brave with --remote-debugging-port and set "
-                "UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS (see README).",
-                flush=True,
-            )
-            print()
             while True:
                 raw = input_fn(
-                    f"Press Enter to run unsubscribe automation on {len(selected_for_unsub)} "
-                    "selection(s) [q to quit]\n  > "
+                    f"Press Enter to unsubscribe all {len(selected_for_unsub)} selected "
+                    "[q to quit]\n  > "
                 )
                 choice = raw.strip()
                 if choice.lower() == "q":
@@ -477,17 +466,14 @@ def run_check(
                         selected_for_unsub,
                         debugger_address=dbg,
                     )
-                    print_automation_report(report)
+                    print_unsubscribe_report(report)
                     break
                 print("  (Enter or q — try again.)")
 
         return 0
     except KeyboardInterrupt:
         print("\nInterrupted. Partial selections:")
-        for num, from_, subj in sorted(new_unsub_rows, key=lambda t: t[0]):
-            print(f'  #{num}  {from_} — "{subj}"')
-        for from_, subj in reconsidered_selected:
-            print(f'  (reconsidered) {from_} — "{subj}"')
+        _print_selection_summary(new_unsub_rows, reconsidered_selected)
         return 130
 
 

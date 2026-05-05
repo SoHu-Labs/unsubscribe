@@ -28,6 +28,15 @@ def test_sender_key_empty_angle_brackets_returns_none() -> None:
     assert sender_key("<>") is None
 
 
+def test_sender_key_empty_string_returns_none() -> None:
+    assert sender_key("") is None
+
+
+def test_sender_key_whitespace_only_returns_none() -> None:
+    assert sender_key("   ") is None
+    assert sender_key(" ") is None
+
+
 def test_is_kept_false_when_sender_key_none() -> None:
     assert is_kept({"a@b.com": {}}, "") is False
 
