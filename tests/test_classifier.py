@@ -44,6 +44,23 @@ def test_bulk_newsletter_without_unsubscribe_path_is_not_candidate() -> None:
     assert is_unsubscribable_newsletter(headers, has_body_unsubscribe_link=False) is False
 
 
+def test_newsletter_vendor_https_list_unsubscribe_without_mailchimp_is_candidate() -> None:
+    """Airlines, travel, etc. use their own unsubscribe hosts (not ESP allowlist)."""
+    headers = _load_headers("newsletter_generic_vendor_unsub.json")
+    assert is_unsubscribable_newsletter(headers) is True
+
+
+def test_newsletter_google_cloud_style_list_unsubscribe_is_candidate() -> None:
+    headers = _load_headers("newsletter_google_cloud_style.json")
+    assert is_unsubscribable_newsletter(headers) is True
+
+
+def test_newsletter_list_unsubscribe_post_only_is_candidate() -> None:
+    """Some senders expose RFC 8058 Post without repeating List-Unsubscribe in headers we see."""
+    headers = _load_headers("newsletter_oneclick_post_header_only.json")
+    assert is_unsubscribable_newsletter(headers) is True
+
+
 def test_body_link_flag_without_bulk_signal_is_not_candidate() -> None:
     """Caller may pass has_body_unsubscribe_link=True, but (a) bulk must still hold."""
     headers = _load_headers("personal_no.json")

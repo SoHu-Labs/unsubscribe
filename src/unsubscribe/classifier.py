@@ -2,28 +2,15 @@
 
 from __future__ import annotations
 
-# Host/path fragments typical of legitimate list providers (restrictive allowlist).
-_LIST_HOST_MARKERS: tuple[str, ...] = (
-    "list-manage.com",
-    "mailchimp",
-    "substack.com",
-    "convertkit",
-    "sendgrid",
-    "constantcontact",
-    "hubspot",
-    "listrak",
-    "cmail",
-    "createsend.com",
-)
-
 
 def _normalize_headers(headers: dict[str, str]) -> dict[str, str]:
     return {name.strip().lower(): value for name, value in headers.items()}
 
 
 def _has_unsubscribe_path(norm: dict[str, str], *, has_body_unsubscribe_link: bool) -> bool:
-    lu = (norm.get("list-unsubscribe") or "").strip()
-    if lu:
+    if (norm.get("list-unsubscribe") or "").strip():
+        return True
+    if (norm.get("list-unsubscribe-post") or "").strip():
         return True
     return has_body_unsubscribe_link
 
@@ -40,14 +27,18 @@ def _transactional(norm: dict[str, str]) -> bool:
 
 
 def _bulk_marketing(norm: dict[str, str]) -> bool:
+    """Bulk / list mail heuristics (given an unsubscribe path was already found elsewhere)."""
     precedence = (norm.get("precedence") or "").strip().lower()
     if precedence == "bulk":
         return True
     from_ = (norm.get("from") or "").lower()
     if any(h in from_ for h in ("newsletter@", "digest@", "marketing@", "mailer@")):
         return True
-    lu = (norm.get("list-unsubscribe") or "").lower()
-    if lu and any(marker in lu for marker in _LIST_HOST_MARKERS):
+    # RFC 2369 List-Unsubscribe — any non-empty value (https, mailto, vendor-specific).
+    if (norm.get("list-unsubscribe") or "").strip():
+        return True
+    # RFC 8058 one-click — strong mailing-list signal.
+    if (norm.get("list-unsubscribe-post") or "").strip():
         return True
     return False
 

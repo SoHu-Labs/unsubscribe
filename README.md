@@ -68,7 +68,7 @@ The summary is taken from the message body when possible, and skips common **pre
 | Item   | Value                                                  |
 | ------ | ------------------------------------------------------ |
 | Path   | `~/.unsubscribe_keep.json` (hardcoded in this version) |
-| Format | JSON object: sender key → `{ "subject", "date_kept" }` |
+| Format | JSON object: sender key → `{ "subject", "date_kept" }` — **no email body or web page content** (page snapshots from the Brave batch live under **`.unsubscribe_page_capture/`** in the repo — see `unsubscribe_page_capture.py`). |
 
 
 ### Exit codes
@@ -109,9 +109,11 @@ Start Brave with `--remote-debugging-port=9222` **before** accepting automation 
 | Variable                               | When needed                                                                                                                                                                               |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS` | Required for the **browser** batch (e.g. `127.0.0.1:9222`). If unset, one-click / mailto / body steps still run where possible; extracted browser URLs are skipped with a stderr message. |
+| `UNSUBSCRIBE_SUBSCRIBER_EMAIL`        | Optional; visible empty `type=email` fields on preference-center pages are filled with this address before the main Unsubscribe click.                                                  |
 | `UNSUBSCRIBE_LIVE_BRAVE_TRACE_DIR`     | Optional; directory for HTML+PNG failure traces (default: `~/Downloads`).                                                                                                                 |
 | `RUN_LIVE_BRAVE_TRACE`                 | Optional; set to `1` to enable optional trace dumps in trace helpers.                                                                                                                     |
 
+**Page capture:** When the Brave batch runs, the tool writes format-learning artifacts under **`.unsubscribe_page_capture/session_*`** next to `src/` in this checkout (see module constants in `src/unsubscribe/unsubscribe_page_capture.py`; no extra env toggle). That only happens if the debugger address is set, at least one message needs a browser URL, and you confirm automation — one-click-only runs write **no** capture files.
 
 ### Maintainer tests (markers)
 

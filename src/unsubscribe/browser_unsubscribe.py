@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
@@ -15,7 +16,12 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from unsubscribe.browser_helpers import chrome_driver_attach
 from unsubscribe.live_brave_trace import save_live_brave_trace
+from unsubscribe.page_confirmation_markers import (
+    CONFIRMATION_TEXT_MARKERS,
+    PREFERENCE_CENTER_SNIPPETS,
+)
 from unsubscribe.timed_run import TimedRun
+from unsubscribe.unsubscribe_page_capture import PageCaptureSession
 
 logger = logging.getLogger(__name__)
 
@@ -42,28 +48,10 @@ class UnsubscribeElementNotFoundError(RuntimeError):
     """No clickable unsubscribe control matched on the page."""
 
 
-_UNSUBSCRIBED_PAGE_MARKERS: tuple[str, ...] = (
-    "you have been unsubscribed",
-    "you've been unsubscribed",
-    "successfully unsubscribed",
-    "unsubscribed successfully",
-    "you are unsubscribed",
-    "we unsubscribed you",
-    "your email has been removed",
-    "removed from our mailing list",
-    "you will no longer receive",
-    # Government / notice-style confirmations (e.g. subscriber list removals)
-    "successfully removed from this subscriber list",
-    "won't receive any further emails",
-    "will not receive any further emails",
-)
+_UNSUBSCRIBED_PAGE_MARKERS: tuple[str, ...] = CONFIRMATION_TEXT_MARKERS
 
-# Text snippets for preference-center “unsubscribe from everything” options (lowercased match).
-_UNSUBSCRIBE_FROM_ALL_NEEDLES: tuple[str, ...] = (
-    "unsubscribe from all",
-    "unsubscribe from all lists",
-    "unsubscribe me from all",
-)
+# Needles passed into in-page script (same as preference-center snippets).
+_UNSUBSCRIBE_FROM_ALL_NEEDLES: tuple[str, ...] = PREFERENCE_CENTER_SNIPPETS
 
 
 def _visible_page_text(driver: WebDriver) -> str:
@@ -245,24 +233,43 @@ def _try_click_unsubscribe_on_page(
     *,
     settle_s: float = 2.0,
     subscriber_email: str | None = None,
+    record_step: Callable[[str], None] | None = None,
 ) -> None:
-    """Preference-center pre-steps, then unsubscribe click (second pass if no confirmation)."""
+    """Preference-center pre-steps, then unsubscribe click (second pass if no confirmation).
+
+    ``record_step`` receives logical step names for optional page capture (see ``unsubscribe_page_capture``).
+    """
+
+    def _r(name: str) -> None:
+        if record_step is not None:
+            record_step(name)
+
     driver.switch_to.default_content()
     WebDriverWait(driver, 15).until(_page_ready)
     time.sleep(min(settle_s, 3.0))
+    _r("after_landing_settled")
 
     _maybe_click_unsubscribe_from_all(driver)
     time.sleep(0.45)
-    if subscriber_email and _maybe_fill_visible_email_field(driver, subscriber_email):
+    _r("after_maybe_unsubscribe_from_all_click")
+
+    filled = (
+        bool(subscriber_email)
+        and _maybe_fill_visible_email_field(driver, subscriber_email or "")
+    )
+    if filled:
         time.sleep(0.35)
+        _r("after_email_field_fill")
 
     _click_unsubscribe_once_main_or_iframes(driver)
+    _r("after_primary_unsubscribe_click")
     time.sleep(min(1.5, settle_s))
     if _page_suggests_unsubscribed_confirmed(driver):
         return
     try:
         driver.switch_to.default_content()
         _click_unsubscribe_once_main_or_iframes(driver)
+        _r("after_secondary_unsubscribe_click")
     except UnsubscribeElementNotFoundError:
         pass
 
@@ -318,10 +325,33 @@ def batch_browser_unsubscribe(
     )
     driver: WebDriver | None = None
     results: list[dict[str, Any]] = []
+    capture_session: PageCaptureSession | None = PageCaptureSession.create(jobs)
+    if not quiet:
+        progress.step(
+            f"Recording pages for format learning to {capture_session.session_dir}…"
+        )
     try:
         driver = chrome_driver_attach(debugger_address=debugger_address)
         for idx, (email_index, subject, sender, url) in enumerate(jobs, start=1):
             host = urlparse(url).hostname or url[:48]
+            job_row: BrowserUnsubscribeJob = (email_index, subject, sender, url)
+
+            def _record_step(
+                step: str,
+                *,
+                _idx: int = idx,
+                _url: str = url,
+                _job: BrowserUnsubscribeJob = job_row,
+            ) -> None:
+                if capture_session is not None and driver is not None:
+                    capture_session.record_snapshot(
+                        driver,
+                        job_batch_index=_idx,
+                        step=step,
+                        initial_url=_url,
+                        job=_job,
+                    )
+
             try:
                 progress.step(
                     f"Opening unsubscribe URL {idx}/{len(jobs)} in browser — {host} ..."
@@ -334,12 +364,30 @@ def batch_browser_unsubscribe(
                 except Exception:
                     pass
 
+                if capture_session is not None:
+                    capture_session.record_snapshot(
+                        driver,
+                        job_batch_index=idx,
+                        step="after_navigate",
+                        initial_url=url,
+                        job=job_row,
+                    )
+
                 _try_click_unsubscribe_on_page(
                     driver,
                     settle_s=min(2.0, timeout_per_url_s / 4),
                     subscriber_email=subscriber_email,
+                    record_step=_record_step,
                 )
                 time.sleep(min(1.5, timeout_per_url_s / 6))
+                if capture_session is not None:
+                    capture_session.record_snapshot(
+                        driver,
+                        job_batch_index=idx,
+                        step="after_flow_complete",
+                        initial_url=url,
+                        job=job_row,
+                    )
                 if _page_suggests_unsubscribed_confirmed(driver):
                     results.append(
                         _result_row(
@@ -372,6 +420,18 @@ def batch_browser_unsubscribe(
                 )
             except Exception as exc:
                 logger.warning("Unsubscribe failed for %s: %s", url, exc)
+                if capture_session is not None and driver is not None:
+                    try:
+                        capture_session.record_snapshot(
+                            driver,
+                            job_batch_index=idx,
+                            step="after_exception",
+                            initial_url=url,
+                            job=job_row,
+                            error=str(exc)[:800],
+                        )
+                    except Exception:
+                        pass
                 msg = str(exc) or type(exc).__name__
                 results.append(
                     _result_row(

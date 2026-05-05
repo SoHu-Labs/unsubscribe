@@ -221,3 +221,6 @@ __marimo__/
 token.json
 *-token.json
 *credentials*.json
+
+# Local Brave page captures (browser batch); may contain tokens
+.unsubscribe_page_capture/

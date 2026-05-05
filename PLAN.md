@@ -766,6 +766,67 @@ Everything else (token loading, refresh, error wrapping, `build()`) stays
 
 ---
 
+## Unsubscribe page capture — case catalog & handler methods
+
+**Purpose:** Field runs that execute the **Brave browser batch** produce `session_*` directories under **`.unsubscribe_page_capture/`** (see README and `unsubscribe_page_capture.py`) containing `manifest.json` (per-step **primary_category**, **evidence_tags**, **page_url**, **step**, HTML). This section is the **canonical backlog** for turning those observations into automation: each **case** has a **method** (which execution lane owns it) and a **next story** (concrete work).
+
+### How to categorize results from a session
+
+1. **Locate the session:** **`<repo>/.unsubscribe_page_capture/session_<UTC>_<hash>/`** — same base directory as in `PAGE_CAPTURE_DIR` (`unsubscribe_page_capture.py`; typically the checkout root that contains `src/`).
+2. **Read** `session_meta.json` for jobs (subject/sender/initial URL).
+3. **Aggregate** `manifest.json` — example counts by primary bucket:
+   ```bash
+   jq '[.snapshots[].primary_category] | group_by(.) | map({category: .[0], n: length})' manifest.json
+   ```
+4. **Sub-cluster** within a bucket by **host** (first party vs ESP) and **evidence_tags**:
+   ```bash
+   jq -r '.snapshots[] | [.step, .primary_category, .page_url, (.evidence_tags|join("|"))] | @tsv' manifest.json
+   ```
+5. **Treat `after_flow_complete` vs `after_navigate`** for the same job: if **category** or **host** changes across steps, the flow is a **funnel** (multi-page); plan multi-step handling, not a single click.
+
+**Note:** Agent/cannot read your local capture directory unless paths are under the repo or pasted. Refresh this table with **real counts** from your `jq` output when triaging.
+
+### Method legend (execution lanes)
+
+| Method | Meaning |
+| ------ | ------- |
+| **M1 — RFC 8058** | `try_one_click_unsubscribe` (header POST); report `server-acknowledged`; no browser. |
+| **M2 — body URL + browser** | `extract_unsubscribe_link` → `batch_browser_unsubscribe` (attach once, sequential URLs). |
+| **M3 — browser multi-step** | Extend `_try_click_unsubscribe_on_page`: pre-clicks, second pass, form fill (already partially done). |
+| **M4 — env-assisted** | `UNSUBSCRIBE_SUBSCRIBER_EMAIL` and/or future env for known form fields. |
+| **M5 — user session** | Brave already logged in; automation stops at blocker with a **clear report line**; user completes manually in the open profile. |
+| **M6 — out of scope** | Captcha solving / account takeover / server-side fetch of untrusted URLs — not automated; document + skip. |
+
+### Case table (stable IDs ↔ manifest category ↔ method ↔ plan)
+
+Each **case** is one row. **Detection** references `unsubscribe_page_capture.categorize_unsubscribe_page` (`UnsubscribePageCategory` + tags). Implementation **extends** markers/selectors/tests as new HTML samples land in captures.
+
+| ID | Manifest `primary_category` | Typical `evidence_tags` / notes | Primary method | Next story (ordered) |
+| --- | --- | --- | --- | --- |
+| **CAP-01** | `confirmation_likely` | `confirmation_text:*` on `after_flow_complete` (or last step) | **M2/M3** (already navigated); outcome is **confirmed** in report | (1) Add any **new confirmation phrases** from captured HTML into `page_confirmation_markers.py` + unit tests. (2) Prefer **last step** in funnel for confirmation check if earlier steps are forms. |
+| **CAP-02** | `preference_center` | `preference_center_text:*`, `mentions_preferences` | **M3** | (1) Expand `_UNSUBSCRIBE_FROM_ALL_NEEDLES` from real copy (i18n, “all emails”). (2) Handle **Submit / Save** after radio choice where no “Unsubscribe” literal. (3) Snapshot tests from anonymized HTML fixtures per host **cluster**. |
+| **CAP-03** | `email_entry` | `email_type_input` | **M3 + M4** | (1) Ensure fill runs **before** primary click; optional **Confirm email** second field. (2) Detect `input[type=text]` with `name=*email*` if ESP omits `type=email`. (3) Fixture tests per pattern. |
+| **CAP-04** | `generic_unsubscribe_context` | `mentions_unsubscribe` / `mentions_opt_out` but no confirmation/preference text match | **M2/M3** | (1) Broaden `_find_unsubscribe_element` + JS needle list from captured pages. (2) **Cluster by registrable domain** in manifest; add host-specific rules only when generic fails (avoid one-off sprawl: one policy module per **domain cluster**). |
+| **CAP-05** | `captcha_or_bot_check` | `captcha_like` | **M6** detect → **M5** complete | (1) On detect: stop automated clicks for that URL, **report** “captcha — complete in Brave”. (2) Optional: pause with message; do not attempt third-party solving. |
+| **CAP-06** | `login_or_auth` | `login_like` | **M5** | (1) Report “login required — use logged-in Brave profile”. (2) Do not inject passwords. (3) If Same SSO opens, document “open session first” in README. |
+| **CAP-07** | `error_or_blocker` | `error_like` | **M5** / manual | (1) Split **expired token** vs **404** vs **rate limit** using copy + status (future: HTTP if feasible). (2) Suggest user re-open fresh link from Gmail. |
+| **CAP-08** | `unknown` | weak/no tags | **Triage** | (1) Re-run categorizer with longer `text_preview` or full HTML classifiers. (2) Assign to CAP-02–CAP-04 once manually labeled; add **golden HTML** fixture. |
+
+### Funnel / multi-step (cross-cutting)
+
+| ID | Pattern | Method | Plan |
+| --- | --- | --- | --- |
+| **CAP-F1** | Same job: `after_navigate` = preference/generic → `after_flow_complete` = confirmation | **M3** | Treat as **single story**: state machine **land → optional pref-click → optional email → click → optional confirm click**; manifest already gives step boundaries **—** align automation and **confirmed** detection with **final** page only (or explicit success page detector). |
+| **CAP-F2** | New tab / redirect chain (`page_url` host changes 2+ times) | **M2/M3** | Log **redirect chain** in manifest (optional future field); test **window** focus (already partial). |
+
+### Workflow for maintainers after each field capture
+
+1. Copy or reference `manifest.json` + 1–2 anonymized `.html` samples into `tests/fixtures/capture/` (new) **or** paste `jq` summary into a PR.
+2. Update **CAP-*** rows if a **new pattern** appears (new primary bucket or tag).
+3. Implement **next story** for the highest-volume bucket first; **TDD**: fixture HTML → failing test → handler change.
+
+---
+
 ## Watch-outs
 
 - **Security:** Unsubscribe links are **attacker-controlled**; prefer
