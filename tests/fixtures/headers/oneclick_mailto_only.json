@@ -1,0 +1,4 @@
+{
+  "List-Unsubscribe": "<mailto:newsletter@acme.test?subject=unsubscribe>",
+  "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+}

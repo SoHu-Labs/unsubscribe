@@ -1,0 +1,11 @@
+# Minimal dev env (mamba / conda). After create/activate, install the package editable:
+#   mamba env create -f environment.yml
+#   mamba activate unsubscribe
+#   pip install -e ".[dev]"
+name: unsubscribe
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pytest>=8

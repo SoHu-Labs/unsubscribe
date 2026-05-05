@@ -1,0 +1,4 @@
+{
+  "List-Unsubscribe": "<https://lists.example.test/unsubscribe?token=abc>",
+  "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+}

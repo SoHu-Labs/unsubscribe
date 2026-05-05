@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unsubscribe"
+description = "Newsletter unsubscribe assistant (see PLAN.md)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+version = "0.1.0"
+dependencies = [
+    "google-api-python-client>=2.0.0",
+    "google-auth>=2.0.0",
+]
+
+[project.scripts]
+unsubscribe = "unsubscribe.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "selenium>=4"]
+browser = ["selenium>=4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: tests that need a real browser (gated by RUN_E2E)",
+    "live_brave: tests that attach to maintainer Brave (gated by RUN_LIVE_BRAVE)",
+]

@@ -1,0 +1,309 @@
+"""CLI ``unsubscribe check`` (Iteration 4) with fake backend and scripted input."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from unsubscribe.cli import main, run_check
+from unsubscribe.execution import AutomationReport, MessageAutomationOutcome
+from unsubscribe.gmail_facade import GmailFacade, GmailHeaderSummary, headers_from_summary
+
+_UNSUB = "<https://list-manage.com/unsub/x>"
+
+
+def _msg(
+    mid: str,
+    *,
+    from_: str,
+    subject: str,
+    date: str,
+    snippet: str = "sn",
+) -> GmailHeaderSummary:
+    return GmailHeaderSummary(
+        id=mid,
+        thread_id="t",
+        from_=from_,
+        subject=subject,
+        date=date,
+        snippet=snippet,
+        list_unsubscribe=_UNSUB,
+        list_unsubscribe_post=None,
+    )
+
+
+class _FakeBackend:
+    def __init__(self, messages: list[GmailHeaderSummary]) -> None:
+        self.messages = messages
+        self.last_query: str | None = None
+        self.bodies: dict[str, str] = {}
+
+    def list_messages(self, query: str, *, max_results: int = 50):
+        self.last_query = query
+        return self.messages[:max_results]
+
+    def get_message_html(self, message_id: str) -> str:
+        return "<html></html>"
+
+    def get_message_body_text(self, message_id: str) -> str:
+        return self.bodies.get(message_id, f"Long body text for {message_id}.")
+
+
+def test_headers_from_summary_round_trip() -> None:
+    m = _msg("1", from_="A <a@a.com>", subject="S", date="Mon, 1 Jan 2024 00:00:00 +0000")
+    h = headers_from_summary(m)
+    assert h["From"] == "A <a@a.com>"
+    assert h["List-Unsubscribe"] == _UNSUB
+
+
+def test_run_check_query_days_and_chats(tmp_path: Path) -> None:
+    k = tmp_path / ".unsubscribe_keep.json"
+    fb = _FakeBackend([])
+    facade = GmailFacade(fb)
+
+    def _inp(_p: str = "") -> str:
+        return ""
+
+    run_check(7, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=True)
+    assert fb.last_query is not None
+    assert "newer_than:7d" in fb.last_query
+    assert "-in:chats" in fb.last_query
+
+
+def test_run_check_filters_kept_and_shows_summary(capsys, tmp_path: Path) -> None:
+    k = tmp_path / ".unsubscribe_keep.json"
+    k.write_text(
+        json.dumps(
+            {"kept@old.com": {"subject": "Old", "date_kept": "2024-01-01"}},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    messages = [
+        _msg(
+            "m_kept",
+            from_="K <kept@old.com>",
+            subject="Dup",
+            date="Fri, 5 Jan 2024 12:00:00 +0000",
+        ),
+        _msg(
+            "m_newer",
+            from_="N <new1@list.com>",
+            subject="Alpha",
+            date="Wed, 10 Jan 2024 12:00:00 +0000",
+        ),
+        _msg(
+            "m_older",
+            from_="O <new2@list.com>",
+            subject="Beta",
+            date="Mon, 8 Jan 2024 12:00:00 +0000",
+        ),
+    ]
+    fb = _FakeBackend(messages)
+    facade = GmailFacade(fb)
+
+    inputs = iter(
+        [
+            "u",
+            "u",
+            "y",
+            "u",
+        ]
+    )
+
+    def _inp(_p: str = "") -> str:
+        return next(inputs)
+
+    run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=True)
+    out = capsys.readouterr().out
+    assert "Previously kept (will not be asked):" in out
+    assert '  1. kept@old.com — "Old" (kept 2024-01-01)' in out
+    assert "kept@old.com" in out
+    assert "  1. N <new1@list.com> : Alpha ::" in out
+    assert "  2. O <new2@list.com> : Beta ::" in out
+    assert "K <kept@old.com> : Old ::" in out
+    assert "Selected for unsubscribe:" in out
+    assert "New (from review):" in out
+    assert '    #1  N <new1@list.com> — "Alpha"' in out
+    assert '    #2  O <new2@list.com> — "Beta"' in out
+    assert "Reconsidered (was on keep list):" in out
+    assert '    1. K <kept@old.com> — "Old"' in out
+    assert "  Total: 3" in out
+    data = json.loads(k.read_text(encoding="utf-8"))
+    assert "kept@old.com" not in data
+    assert data == {}
+
+
+def test_run_check_zero_new_still_reconsider(capsys, tmp_path: Path) -> None:
+    k = tmp_path / ".unsubscribe_keep.json"
+    k.write_text(
+        json.dumps({"sole@x.com": {"subject": "S", "date_kept": "d"}}),
+        encoding="utf-8",
+    )
+    fb = _FakeBackend([])
+    facade = GmailFacade(fb)
+    inputs = iter([""])
+
+    def _inp(_p: str = "") -> str:
+        return next(inputs)
+
+    run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=True)
+    out = capsys.readouterr().out
+    assert "No new newsletters with unsubscribe links found" in out
+    assert "Reconsider any previously kept newsletters?" in out
+    assert "  1. sole@x.com : S ::" in out
+
+
+def test_run_check_q_mid_walkthrough_keeps_incremental_save(tmp_path: Path, capsys) -> None:
+    k = tmp_path / ".unsubscribe_keep.json"
+    messages = [
+        _msg("a", from_="A <a@a.com>", subject="A", date="Wed, 10 Jan 2024 00:00:00 +0000"),
+        _msg("b", from_="B <b@b.com>", subject="B", date="Tue, 9 Jan 2024 00:00:00 +0000"),
+    ]
+    fb = _FakeBackend(messages)
+    facade = GmailFacade(fb)
+    inputs = iter(["", "q", ""])
+
+    def _inp(_p: str = "") -> str:
+        return next(inputs)
+
+    run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=True)
+    data = json.loads(k.read_text(encoding="utf-8"))
+    assert "a@a.com" in data
+    out = capsys.readouterr().out
+    assert "Stopping walkthrough early" in out
+
+
+def test_main_empty_argv_defaults_to_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_run_check(days: int, **kwargs: object) -> int:
+        seen["days"] = days
+        return 0
+
+    monkeypatch.setattr("unsubscribe.cli.run_check", _fake_run_check)
+    monkeypatch.setattr(
+        "unsubscribe.cli.GmailApiBackend",
+        MagicMock(from_env=MagicMock(return_value=MagicMock())),
+    )
+    monkeypatch.setattr("unsubscribe.cli.GmailFacade", MagicMock())
+
+    assert main([]) == 0
+    assert seen.get("days") == 3
+
+
+def test_main_check_help() -> None:
+    with pytest.raises(SystemExit) as ei:
+        main(["check", "--help"])
+    assert ei.value.code == 0
+
+
+def test_run_check_automation_enter_calls_run_automated(
+    capsys, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS", "127.0.0.1:9222")
+    k = tmp_path / ".unsubscribe_keep.json"
+    messages = [
+        _msg("m1", from_="X <x@x.com>", subject="S", date="Wed, 10 Jan 2024 12:00:00 +0000"),
+    ]
+    fb = _FakeBackend(messages)
+    facade = GmailFacade(fb)
+    inputs = iter(["u", ""])
+
+    def _inp(_p: str = "") -> str:
+        return next(inputs)
+
+    sample_report = AutomationReport(
+        (
+            MessageAutomationOutcome(
+                "m1",
+                "X <x@x.com>",
+                "S",
+                "one_click_ok",
+                "One-Click unsubscribe accepted (HTTP 204).",
+            ),
+        )
+    )
+    with patch("unsubscribe.cli.run_automated_unsubscribe", return_value=sample_report) as mock_auto:
+        run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=False)
+    mock_auto.assert_called_once()
+    out = capsys.readouterr().out
+    assert "Automated unsubscribe — per message:" in out
+    assert "[one-click HTTP] X <x@x.com> — S" in out
+    assert "Verified automated completions: 1 of 1" in out
+
+
+def test_run_check_automation_q_skips(capsys, tmp_path: Path) -> None:
+    k = tmp_path / ".unsubscribe_keep.json"
+    messages = [
+        _msg("m1", from_="X <x@x.com>", subject="S", date="Wed, 10 Jan 2024 12:00:00 +0000"),
+    ]
+    fb = _FakeBackend(messages)
+    facade = GmailFacade(fb)
+    inputs = iter(["u", "q"])
+
+    def _inp(_p: str = "") -> str:
+        return next(inputs)
+
+    with patch("unsubscribe.cli.run_automated_unsubscribe") as mock_auto:
+        run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=False)
+    mock_auto.assert_not_called()
+
+
+def test_run_check_reconsider_gate_k_skips_review(tmp_path: Path, capsys) -> None:
+    k = tmp_path / ".unsubscribe_keep.json"
+    k.write_text(
+        json.dumps({"a@a.com": {"subject": "Subj", "date_kept": "2024-01-01"}}),
+        encoding="utf-8",
+    )
+    fb = _FakeBackend([])
+    facade = GmailFacade(fb)
+    inputs = iter(["k"])
+
+    def _inp(_p: str = "") -> str:
+        return next(inputs)
+
+    run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=True)
+    out = capsys.readouterr().out
+    data = json.loads(k.read_text(encoding="utf-8"))
+    assert "a@a.com" in data
+    assert "  1. a@a.com : Subj ::" in out
+    assert "  #1  Previously kept:" not in out
+
+
+def test_run_check_walkthrough_k_keeps_like_enter(tmp_path: Path) -> None:
+    k = tmp_path / ".unsubscribe_keep.json"
+    messages = [
+        _msg("x", from_="Z <z@z.com>", subject="Zed", date="Wed, 10 Jan 2024 12:00:00 +0000"),
+    ]
+    fb = _FakeBackend(messages)
+    facade = GmailFacade(fb)
+    inputs = iter(["k", ""])
+
+    def _inp(_p: str = "") -> str:
+        return next(inputs)
+
+    run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=True)
+    data = json.loads(k.read_text(encoding="utf-8"))
+    assert "z@z.com" in data
+
+
+def test_invalid_prompt_repeats(capsys, tmp_path: Path) -> None:
+    k = tmp_path / ".unsubscribe_keep.json"
+    messages = [
+        _msg("x", from_="X <x@x.com>", subject="X", date="Wed, 10 Jan 2024 00:00:00 +0000"),
+    ]
+    fb = _FakeBackend(messages)
+    facade = GmailFacade(fb)
+    inputs = iter(["maybe", "u"])
+
+    def _inp(_p: str = "") -> str:
+        return next(inputs)
+
+    run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=True)
+    assert "try again" in capsys.readouterr().out

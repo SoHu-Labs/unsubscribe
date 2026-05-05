@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# OAuth / authorized-user token JSON (PLAN — never commit real credentials)
+token.json
+*-token.json
+*credentials*.json
