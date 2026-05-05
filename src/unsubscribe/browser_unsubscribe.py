@@ -14,6 +14,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from unsubscribe.browser_helpers import chrome_driver_attach
 from unsubscribe.live_brave_trace import save_live_brave_trace
+from unsubscribe.timed_run import TimedRun
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +120,16 @@ def batch_browser_unsubscribe(
     *,
     debugger_address: str,
     timeout_per_url_s: float = 30,
+    progress: TimedRun | None = None,
+    quiet: bool = False,
 ) -> dict[str, bool]:
     """
     Attach **once**, visit each URL in order, try to click an unsubscribe control,
     **quit once**. On failure, save a trace and continue.
+
+    When ``progress`` is omitted, starts an internal :class:`TimedRun` (silenced with
+    ``quiet=True``, for tests). Otherwise uses the shared counter (e.g. from
+    :func:`run_automated_unsubscribe`) so step indices stay global.
 
     Returns mapping ``url -> success``.
     """
@@ -130,10 +137,22 @@ def batch_browser_unsubscribe(
     if not urls:
         return results
 
-    driver = chrome_driver_attach(debugger_address=debugger_address)
+    if progress is None:
+        progress = TimedRun(2 + 2 * len(urls), enabled=not quiet)
+
+    progress.step(
+        f"Attaching WebDriver to Brave at {debugger_address} (already running with "
+        "--remote-debugging-port)..."
+    )
+    driver: WebDriver | None = None
     try:
-        for url in urls:
+        driver = chrome_driver_attach(debugger_address=debugger_address)
+        for idx, url in enumerate(urls, start=1):
             try:
+                host = urlparse(url).hostname or url[:48]
+                progress.step(
+                    f"Opening unsubscribe URL {idx}/{len(urls)} in browser — {host} ..."
+                )
                 driver.get(url)
                 try:
                     handles = driver.window_handles
@@ -147,8 +166,16 @@ def batch_browser_unsubscribe(
                 )
                 time.sleep(min(1.5, timeout_per_url_s / 6))
                 results[url] = True
+                progress.step(
+                    f"Unsubscribe action {idx}/{len(urls)} ({host}) — finished (click sent, "
+                    "page settled)."
+                )
             except Exception as exc:
                 logger.warning("Unsubscribe failed for %s: %s", url, exc)
+                host = urlparse(url).hostname or url[:48]
+                progress.step(
+                    f"Unsubscribe action {idx}/{len(urls)} ({host}) — failed ({type(exc).__name__})."
+                )
                 try:
                     save_live_brave_trace(driver, label=_url_trace_label(url))
                 except Exception as trace_exc:
@@ -156,10 +183,12 @@ def batch_browser_unsubscribe(
                 results[url] = False
                 continue
     finally:
-        try:
-            driver.quit()
-        except Exception as e:
-            logger.warning("driver.quit() failed: %s", e)
+        if driver is not None:
+            progress.step("Closing WebDriver session (your Brave window stays open).")
+            try:
+                driver.quit()
+            except Exception as e:
+                logger.warning("driver.quit() failed: %s", e)
 
     return results
 

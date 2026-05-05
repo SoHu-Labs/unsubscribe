@@ -6,6 +6,7 @@ import argparse
 import re
 import sys
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from unsubscribe.keep_list import (
 )
 
 DEFAULT_KEEP_LIST_PATH = Path.home() / ".unsubscribe_keep.json"
+_BODY_PREFETCH_WORKERS = 8
 _PREVIEW_WIDTH = 72
 _PREVIEW_MAX_LINES = 5
 
@@ -127,6 +129,28 @@ def substantive_list_summary(snippet: str, body: str) -> str:
             return source
 
     return ""
+
+
+def _fetch_one_body_plain(facade: GmailFacade, message_id: str) -> str:
+    try:
+        return facade.get_message_body_text(message_id)
+    except Exception as e:
+        print(f"(Could not load body for {message_id}: {e})", file=sys.stderr)
+        return ""
+
+
+def _start_body_prefetch(
+    facade: GmailFacade,
+    messages: list[GmailHeaderSummary],
+) -> tuple[ThreadPoolExecutor, dict[str, Future[str]]]:
+    """Begin one plain-body fetch per message in parallel (only for ``messages``, not whole inbox)."""
+    n = len(messages)
+    workers = min(_BODY_PREFETCH_WORKERS, max(1, n))
+    executor = ThreadPoolExecutor(max_workers=workers)
+    futures: dict[str, Future[str]] = {
+        m.id: executor.submit(_fetch_one_body_plain, facade, m.id) for m in messages
+    }
+    return executor, futures
 
 
 def _resolve_kept_message(
@@ -257,6 +281,7 @@ def run_check(
         print()
 
     try:
+        print("Fetching inbox from Gmail…", flush=True)
         messages = facade.list_messages(query, max_results=50)
     except Exception as e:
         print(f"Could not list messages: {e}", file=sys.stderr)
@@ -279,14 +304,6 @@ def run_check(
             enumerate(candidates, start=1)
         )
 
-        body_by_id: dict[str, str] = {}
-        for m in candidates:
-            try:
-                body_by_id[m.id] = facade.get_message_body_text(m.id)
-            except Exception as e:
-                print(f"(Could not load body for {m.id}: {e})", file=sys.stderr)
-                body_by_id[m.id] = ""
-
         if not numbered:
             print(
                 f"No new newsletters with unsubscribe links found in the last {days} days."
@@ -294,50 +311,59 @@ def run_check(
             print()
 
         else:
-            for num, m in numbered:
-                body = body_by_id.get(m.id, "")
-                summary = substantive_list_summary(m.snippet or "", body)
-                if not summary:
-                    summary = "(no preview)"
-                print(f"  {num}. {m.from_} : {m.subject} :: {summary}")
-            print()
+            # Only ``len(candidates)`` body fetches (not list_messages cap / keep-list size).
+            # Prefetch in parallel while the user reads the shortlist; walkthrough blocks
+            # only if it catches up to a message still loading.
+            body_pool, body_futures = _start_body_prefetch(facade, candidates)
+            try:
+                for num, m in numbered:
+                    summary = substantive_list_summary(m.snippet or "", "")
+                    if not summary:
+                        summary = "(no preview)"
+                    print(f"  {num}. {m.from_} : {m.subject} :: {summary}")
+                print()
 
-            stop_walkthrough = False
-            for num, m in numbered:
-                if stop_walkthrough:
-                    break
-                body = body_by_id.get(m.id, "")
-                preview = _body_preview_lines(body) if body else "(no preview)"
-                print("─" * 60)
-                print(f"  #{num}  Subject: {m.subject!r}")
-                print(f"  From: {m.from_}")
-                print(f"  Date: {m.date}")
-                print()
-                print(preview)
-                print()
-                while True:
-                    action = _prompt_loop(
-                        "  [Enter] or [k] keep  [u] unsubscribe  [q] quit\n  > ",
-                        input_fn=input_fn,
-                        valid_empty=True,
-                        valid_u=True,
-                        valid_q=True,
-                        valid_k=True,
-                    )
-                    if action in ("", "k"):
-                        add_to_keep_list(keep_list_path, m.from_, m.subject)
-                        keep_data = load_keep_list(keep_list_path)
+                stop_walkthrough = False
+                for num, m in numbered:
+                    if stop_walkthrough:
                         break
-                    if action == "u":
-                        new_unsub_rows.append((num, m.from_, m.subject))
-                        selected_for_unsub.append(m)
-                        break
-                    if action == "q":
-                        print(
-                            "(Stopping walkthrough early; prior Enter-keeps are saved.)"
+                    body = body_futures[m.id].result()
+                    preview = _body_preview_lines(body) if body else "(no preview)"
+                    print("─" * 60)
+                    print(f"  #{num}  Subject: {m.subject!r}")
+                    print(f"  From: {m.from_}")
+                    print(f"  Date: {m.date}")
+                    print()
+                    print(preview)
+                    print()
+                    while True:
+                        action = _prompt_loop(
+                            "  [k] keep  [Enter] skip  [u] unsubscribe  [q] quit walkthrough\n"
+                            "  > ",
+                            input_fn=input_fn,
+                            valid_empty=True,
+                            valid_u=True,
+                            valid_q=True,
+                            valid_k=True,
                         )
-                        stop_walkthrough = True
-                        break
+                        if action == "k":
+                            add_to_keep_list(keep_list_path, m.from_, m.subject)
+                            keep_data = load_keep_list(keep_list_path)
+                            break
+                        if action == "":
+                            break
+                        if action == "u":
+                            new_unsub_rows.append((num, m.from_, m.subject))
+                            selected_for_unsub.append(m)
+                            break
+                        if action == "q":
+                            print(
+                                "(Stopping walkthrough early; prior k-keeps are already saved.)"
+                            )
+                            stop_walkthrough = True
+                            break
+            finally:
+                body_pool.shutdown(wait=False, cancel_futures=True)
 
         keep_data = load_keep_list(keep_list_path)
         save_keep_list(keep_list_path, keep_data)
@@ -355,17 +381,11 @@ def run_check(
                 display_from = sk
                 if resolved is not None:
                     display_from = resolved.from_
-                    try:
-                        kb = facade.get_message_body_text(resolved.id)
-                    except Exception as e:
-                        print(
-                            f"(Could not load body for {resolved.id}: {e})",
-                            file=sys.stderr,
-                        )
-                        kb = ""
-                    summary = substantive_list_summary(resolved.snippet or "", kb) or (
-                        "(no preview)"
-                    )
+                    # Snippet only: avoids one full-body fetch per kept sender here (was
+                    # mistaken for “N walkthrough” loads when the keep list is long).
+                    summary = substantive_list_summary(
+                        resolved.snippet or "", ""
+                    ) or ("(no preview)")
                 else:
                     summary = "(not in current search window)"
                 kept_rows.append((sk, meta, resolved, summary, display_from))
@@ -433,11 +453,19 @@ def run_check(
         _print_selection_summary(new_unsub_rows, reconsidered_selected)
 
         if selected_for_unsub and not skip_automation:
+            print(
+                "Order of operations: List-Unsubscribe one-click HTTP first for each message, "
+                "then a browser step only for messages that still have an allowlisted unsubscribe "
+                "URL and no successful one-click. Brave is not opened when one-click alone succeeds. "
+                "For browser steps, start Brave with --remote-debugging-port and set "
+                "UNSUBSCRIBE_BROWSER_DEBUGGER_ADDRESS (see README).",
+                flush=True,
+            )
             print()
             while True:
                 raw = input_fn(
-                    f"Press Enter to unsubscribe all {len(selected_for_unsub)} selected "
-                    "[q to quit]\n  > "
+                    f"Press Enter to run unsubscribe automation on {len(selected_for_unsub)} "
+                    "selection(s) [q to quit]\n  > "
                 )
                 choice = raw.strip()
                 if choice.lower() == "q":

@@ -115,6 +115,36 @@ def test_list_messages_calls_metadata_then_minimal_per_message(mock_build: Magic
 
 
 @patch("unsubscribe.gmail_api_backend.build")
+def test_list_messages_multiple_ids_respects_workers_one(mock_build: MagicMock) -> None:
+    """Sequential path issues two ``get`` calls per list id (for mock ordering in tests)."""
+    meta = json.loads((_FIXTURES / "metadata_message.json").read_text(encoding="utf-8"))
+    minimal = json.loads((_FIXTURES / "minimal_message.json").read_text(encoding="utf-8"))
+
+    mock_service = MagicMock()
+    mock_build.return_value = mock_service
+    mock_service.users.return_value.messages.return_value.list.return_value.execute.return_value = {
+        "messages": [
+            {"id": "m1", "threadId": "t1"},
+            {"id": "m2", "threadId": "t2"},
+        ],
+    }
+    get_mock = mock_service.users.return_value.messages.return_value.get
+    get_exec = get_mock.return_value.execute
+    get_exec.side_effect = [meta, minimal, meta, minimal]
+
+    backend = GmailApiBackend(
+        credentials=MagicMock(),
+        list_messages_max_workers=1,
+    )
+    out = backend.list_messages("newer_than:3d", max_results=5)
+
+    assert len(out) == 2
+    assert get_mock.call_count == 4
+    assert {get_mock.call_args_list[i].kwargs["id"] for i in (0, 1)} == {"m1"}
+    assert {get_mock.call_args_list[i].kwargs["id"] for i in (2, 3)} == {"m2"}
+
+
+@patch("unsubscribe.gmail_api_backend.build")
 def test_list_messages_empty_inbox(mock_build: MagicMock) -> None:
     mock_service = MagicMock()
     mock_build.return_value = mock_service

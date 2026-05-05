@@ -47,6 +47,7 @@ def test_batch_attach_once_get_each_url_quit_once() -> None:
             urls,
             debugger_address="127.0.0.1:9222",
             timeout_per_url_s=10,
+            quiet=True,
         )
 
     mock_attach.assert_called_once_with(debugger_address="127.0.0.1:9222")
@@ -86,6 +87,7 @@ def test_batch_failure_on_one_url_continues_and_quits_once() -> None:
         out = batch_browser_unsubscribe(
             ["https://bad.example/u", "https://good.example/u"],
             debugger_address="127.0.0.1:9222",
+            quiet=True,
         )
 
     mock_trace.assert_called()
@@ -96,7 +98,7 @@ def test_batch_failure_on_one_url_continues_and_quits_once() -> None:
 
 def test_empty_urls_no_attach() -> None:
     with patch("unsubscribe.browser_unsubscribe.chrome_driver_attach") as mock_attach:
-        out = batch_browser_unsubscribe([], debugger_address="127.0.0.1:9222")
+        out = batch_browser_unsubscribe([], debugger_address="127.0.0.1:9222", quiet=True)
     mock_attach.assert_not_called()
     assert out == {}
 

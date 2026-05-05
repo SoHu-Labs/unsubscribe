@@ -55,7 +55,7 @@ The summary is taken from the message body when possible, and skips common **pre
 
 | Phase | Keys |
 | ----- | ---- |
-| New-candidate walkthrough | **Enter** or **k** — keep sender (saved to keep-list immediately); **u** — mark for unsubscribe; **q** — stop walkthrough (prior keeps already saved). |
+| New-candidate walkthrough | **k** — keep sender (saved to keep-list immediately); **Enter** — skip this message (no keep, no unsubscribe); **u** — mark for unsubscribe; **q** — quit walkthrough (**k**-keeps already saved). |
 | Reconsider (overview) | After a **numbered list** of kept senders (same `Sender : Subject :: summary` style): **y** — walk through each row below; **Enter** or **k** — skip reconsider entirely (keep-list unchanged). |
 | Reconsider (per row) | **Enter** or **k** — keep (no change); **u** — mark for unsubscribe and remove from keep-list; **q** — skip remaining re-check rows. |
 | After summary (if any selected for unsubscribe) | **Enter** — run automation (one-click → body link → Brave batch); **q** — skip automation. |

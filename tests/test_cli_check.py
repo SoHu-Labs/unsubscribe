@@ -158,6 +158,7 @@ def test_run_check_zero_new_still_reconsider(capsys, tmp_path: Path) -> None:
 
 
 def test_run_check_q_mid_walkthrough_keeps_incremental_save(tmp_path: Path, capsys) -> None:
+    """First message **k**-keep persists before **q** quits walkthrough on the next message."""
     k = tmp_path / ".unsubscribe_keep.json"
     messages = [
         _msg("a", from_="A <a@a.com>", subject="A", date="Wed, 10 Jan 2024 00:00:00 +0000"),
@@ -165,7 +166,7 @@ def test_run_check_q_mid_walkthrough_keeps_incremental_save(tmp_path: Path, caps
     ]
     fb = _FakeBackend(messages)
     facade = GmailFacade(fb)
-    inputs = iter(["", "q", ""])
+    inputs = iter(["k", "q", ""])
 
     def _inp(_p: str = "") -> str:
         return next(inputs)
@@ -233,7 +234,7 @@ def test_run_check_automation_enter_calls_run_automated(
         run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=False)
     mock_auto.assert_called_once()
     out = capsys.readouterr().out
-    assert "Automated unsubscribe — per message:" in out
+    assert "Results by message:" in out
     assert "[one-click HTTP] X <x@x.com> — S" in out
     assert "Verified automated completions: 1 of 1" in out
 
@@ -276,7 +277,7 @@ def test_run_check_reconsider_gate_k_skips_review(tmp_path: Path, capsys) -> Non
     assert "  #1  Previously kept:" not in out
 
 
-def test_run_check_walkthrough_k_keeps_like_enter(tmp_path: Path) -> None:
+def test_run_check_walkthrough_k_keeps_and_enter_skips_reconsider(tmp_path: Path) -> None:
     k = tmp_path / ".unsubscribe_keep.json"
     messages = [
         _msg("x", from_="Z <z@z.com>", subject="Zed", date="Wed, 10 Jan 2024 12:00:00 +0000"),
@@ -291,6 +292,22 @@ def test_run_check_walkthrough_k_keeps_like_enter(tmp_path: Path) -> None:
     run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=True)
     data = json.loads(k.read_text(encoding="utf-8"))
     assert "z@z.com" in data
+
+
+def test_run_check_walkthrough_enter_skips_without_keep(tmp_path: Path) -> None:
+    k = tmp_path / ".unsubscribe_keep.json"
+    messages = [
+        _msg("x", from_="Z <z@z.com>", subject="Zed", date="Wed, 10 Jan 2024 12:00:00 +0000"),
+    ]
+    fb = _FakeBackend(messages)
+    facade = GmailFacade(fb)
+    inputs = iter([""])
+
+    def _inp(_p: str = "") -> str:
+        return next(inputs)
+
+    run_check(3, facade=facade, keep_list_path=k, input_fn=_inp, skip_automation=True)
+    assert json.loads(k.read_text(encoding="utf-8")) == {}
 
 
 def test_invalid_prompt_repeats(capsys, tmp_path: Path) -> None:

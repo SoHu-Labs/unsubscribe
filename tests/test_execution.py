@@ -51,6 +51,7 @@ def test_run_automated_one_click_counts_plus_browser() -> None:
                 facade,
                 [m1, m2],
                 debugger_address="127.0.0.1:9222",
+                verbose=False,
             )
 
     assert len(report) == 2
@@ -75,6 +76,7 @@ def test_run_automated_skips_browser_without_debugger_address(capsys) -> None:
             facade,
             [m],
             debugger_address=None,
+            verbose=False,
         )
 
     mock_batch.assert_not_called()

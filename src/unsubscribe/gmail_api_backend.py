@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from html import unescape
 from pathlib import Path
 
@@ -27,6 +29,62 @@ _METADATA_HEADERS = (
 )
 
 _MAX_BODY_TEXT_CHARS = 500
+
+# google-api-python-client service objects are not thread-safe; use one ``build()`` per thread.
+_tls_gmail = threading.local()
+_LIST_MESSAGES_MAX_WORKERS_CAP = 16
+
+
+def _thread_local_gmail_service(credentials: Credentials) -> object:
+    key = id(credentials)
+    if getattr(_tls_gmail, "creds_key", None) != key:
+        _tls_gmail.creds_key = key
+        _tls_gmail.service = build(
+            "gmail",
+            "v1",
+            credentials=credentials,
+            cache_discovery=False,
+        )
+    return _tls_gmail.service
+
+
+def _header_summary_from_get_api(get_api, list_item: dict) -> GmailHeaderSummary:
+    """Build :class:`GmailHeaderSummary` using two ``messages().get`` calls (metadata + minimal)."""
+    mid = list_item["id"]
+    tid_hint = list_item.get("threadId", "")
+    meta = get_api(
+        userId="me",
+        id=mid,
+        format="metadata",
+        metadataHeaders=list(_METADATA_HEADERS),
+    ).execute()
+    headers = {
+        h["name"]: h["value"]
+        for h in (meta.get("payload", {}).get("headers") or [])
+    }
+    minimal = get_api(
+        userId="me",
+        id=mid,
+        format="minimal",
+    ).execute()
+    return GmailHeaderSummary(
+        id=mid,
+        thread_id=meta.get("threadId", tid_hint),
+        from_=headers.get("From", ""),
+        subject=headers.get("Subject", ""),
+        date=headers.get("Date", ""),
+        snippet=minimal.get("snippet", ""),
+        list_unsubscribe=headers.get("List-Unsubscribe"),
+        list_unsubscribe_post=headers.get("List-Unsubscribe-Post"),
+    )
+
+
+def _header_summary_from_list_item_threaded(
+    credentials: Credentials, list_item: dict
+) -> GmailHeaderSummary:
+    service = _thread_local_gmail_service(credentials)
+    get_api = service.users().messages().get
+    return _header_summary_from_get_api(get_api, list_item)
 
 
 def _urlsafe_b64decode(data: str) -> bytes:
@@ -94,8 +152,15 @@ def strip_html_to_text(html: str) -> str:
 class GmailApiBackend:
     """Gmail API backend: read via OAuth token file (``gmail.readonly`` only)."""
 
-    def __init__(self, *, credentials: Credentials) -> None:
+    def __init__(
+        self,
+        *,
+        credentials: Credentials,
+        list_messages_max_workers: int | None = None,
+    ) -> None:
         self._credentials = credentials
+        # None => min(inbox size, cap). Use ``1`` in tests with shared mocks. Real runs fan out.
+        self._list_messages_max_workers = list_messages_max_workers
 
     @classmethod
     def from_token_path(cls, path: Path) -> GmailApiBackend:
@@ -144,42 +209,30 @@ class GmailApiBackend:
                 .execute()
             )
             raw_msgs = list_resp.get("messages") or []
-            out: list[GmailHeaderSummary] = []
-            get_api = service.users().messages().get
-            for m in raw_msgs:
-                mid = m["id"]
-                tid = m.get("threadId", "")
+            if not raw_msgs:
+                return []
 
-                meta = get_api(
-                    userId="me",
-                    id=mid,
-                    format="metadata",
-                    metadataHeaders=list(_METADATA_HEADERS),
-                ).execute()
-                headers = {
-                    h["name"]: h["value"]
-                    for h in (meta.get("payload", {}).get("headers") or [])
-                }
+            n = len(raw_msgs)
+            configured = self._list_messages_max_workers
+            if configured is None:
+                max_workers = min(_LIST_MESSAGES_MAX_WORKERS_CAP, n)
+            else:
+                max_workers = max(1, min(configured, n))
 
-                minimal = get_api(
-                    userId="me",
-                    id=mid,
-                    format="minimal",
-                ).execute()
+            # One worker: same-thread ``get`` calls (mock-friendly, low overhead for tiny scans).
+            if max_workers == 1:
+                get_api = service.users().messages().get
+                return [_header_summary_from_get_api(get_api, m) for m in raw_msgs]
 
-                out.append(
-                    GmailHeaderSummary(
-                        id=mid,
-                        thread_id=meta.get("threadId", tid),
-                        from_=headers.get("From", ""),
-                        subject=headers.get("Subject", ""),
-                        date=headers.get("Date", ""),
-                        snippet=minimal.get("snippet", ""),
-                        list_unsubscribe=headers.get("List-Unsubscribe"),
-                        list_unsubscribe_post=headers.get("List-Unsubscribe-Post"),
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                return list(
+                    pool.map(
+                        lambda item: _header_summary_from_list_item_threaded(
+                            self._credentials, item
+                        ),
+                        raw_msgs,
                     )
                 )
-            return out
         except HttpError as e:
             raise GmailTransportError(f"Gmail API error: {e}") from e
 
