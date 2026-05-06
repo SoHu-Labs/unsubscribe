@@ -18,7 +18,7 @@ This is **optional**: one-click / header-only paths work without a browser. For 
 
 1. Use the same `**pip install -e ".[dev]"`** (or `**[browser]`** from `pyproject.toml`) so **Selenium** is installed.
 2. Set `**GOOGLEADS_BROWSER_DEBUGGER_ADDRESS`** (e.g. `127.0.0.1:9222`) — **same variable name as sibling project googleads-invoice-glugglejug** — and start Brave with that debug port (see **Quick start** / `**brave-gig`** below, or that repo’s `README` / `docs/REAL_WORKFLOW_AND_PREFLIGHT.md`).
-3. `**browser_helpers.py`** only sets `**debuggerAddress`** and calls `**webdriver.Chrome(options=opts)**`, matching the neighbor’s attach helpers — no `ChromeService`, no `binary_location`, **no changing `PATH`**.
+3. `**browser_helpers.py`** only sets `**debuggerAddress`** and calls `**webdriver.Chrome(options=opts)`**, matching the neighbor’s attach helpers — no `ChromeService`, no `binary_location`, **no changing `PATH`**.
 
 **Chromedriver stderr “147 vs 148” warning:** Selenium often prints that **Homebrew’s `chromedriver`** and the **version string it attributes to “Chrome”** disagree. If the run **continues** and you see steps like *Opening unsubscribe URL … in browser*, attach worked — treat the message like noise, same as the sibling project. **Brave’s Chromium can trail** the newest ChromeDriver line Google publishes.
 
@@ -97,7 +97,7 @@ The summary is taken from the message body when possible, and skips common **pre
 
 ### Quick start
 
-Use the `**unsub`** shell alias from `~/.bash_aliases`: same shape as `**send-gig`** — `**brave-gig`**, `**sleep 3**`, `**mamba activate**` …, then the real entrypoint (`**&& googleads-invoice run-month**` vs `**&& cd "$unsub" && unsubscribe**`). The tool reads `**GOOGLEADS_BROWSER_DEBUGGER_ADDRESS**` (shared with **googleads-invoice-glugglejug**).
+Use the `**unsub`** shell alias from `~/.bash_aliases`: same shape as `**send-gig`** — `**brave-gig`**, `**sleep 3`**, `**mamba activate**` …, then the real entrypoint (`**&& googleads-invoice run-month**` vs `**&& cd "$unsub" && unsubscribe**`). The tool reads `**GOOGLEADS_BROWSER_DEBUGGER_ADDRESS**` (shared with **googleads-invoice-glugglejug**).
 
 ```bash
 export GOOGLE_OAUTH_TOKEN="$HOME/.google/oauth_token.json"
@@ -119,7 +119,7 @@ Selenium **attaches** via `debuggerAddress`; it does not start the browser. `**b
 
 `open -a "Brave Browser" --args --remote-debugging-port=9222`
 
-So `**unsub`** runs `**unsubscribe`** after the same Brave+wait+activate prelude as `**send-gig**`. For browser automation you still need `**GOOGLEADS_BROWSER_DEBUGGER_ADDRESS**` set to the same `host:port` (your aliases typically export it next to `**brave-gig**`).
+So `**unsub`** runs `**unsubscribe`** after the same Brave+wait+activate prelude as `**send-gig`**. For browser automation you still need `**GOOGLEADS_BROWSER_DEBUGGER_ADDRESS**` set to the same `host:port` (your aliases typically export it next to `**brave-gig**`).
 
 Direct launch without the alias:
 

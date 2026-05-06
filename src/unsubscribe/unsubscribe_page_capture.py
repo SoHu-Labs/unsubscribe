@@ -165,6 +165,19 @@ def _html_excerpt(driver: WebDriver, max_chars: int = 12000) -> str:
     return src[:max_chars] if len(src) > max_chars else src
 
 
+def _rough_visible_text_from_html(html: str, max_chars: int = 80_000) -> str:
+    """Strip tags so confirmation/unsub phrases in static HTML still classify when innerText lags."""
+
+    if not html:
+        return ""
+    t = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html)
+    t = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", t)
+    t = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", t)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:max_chars] if len(t) > max_chars else t
+
+
 def categorize_unsubscribe_page(
     *,
     page_url: str,
@@ -177,7 +190,10 @@ def categorize_unsubscribe_page(
 
     Tags are lowercase tokens; the manifest stores both for clustering and future handlers.
     """
-    blob = normalize_text_for_confirmation_match(f"{page_title}\n{text_preview}")
+    html_plain = _rough_visible_text_from_html(html_excerpt)
+    combo = f"{page_title}\n{text_preview}\n{html_plain}".strip()
+    norm_combo = normalize_text_for_confirmation_match(combo)
+    combo_lower = combo.lower()
     html_low = html_excerpt.lower()
 
     tags: list[str] = []
@@ -187,13 +203,13 @@ def categorize_unsubscribe_page(
             tags.append(name)
 
     if any(
-        x in blob or x in html_low
+        x in norm_combo or x in html_low
         for x in ("recaptcha", "hcaptcha", "g-recaptcha", "cf-turnstile", "turnstile")
     ):
         tag("captcha_like")
 
     if any(
-        x in blob
+        x in combo_lower
         for x in (
             "sign in",
             "log in",
@@ -209,7 +225,7 @@ def categorize_unsubscribe_page(
         tag("login_like")
 
     if any(
-        x in blob
+        x in combo_lower
         for x in (
             "access denied",
             "access blocked",
@@ -226,25 +242,29 @@ def categorize_unsubscribe_page(
         tag("error_like")
 
     for m in CONFIRMATION_TEXT_MARKERS:
-        if m in blob:
+        if m in norm_combo:
             tag(f"confirmation_text:{m[:48]}")
-            break
 
     for m in PREFERENCE_CENTER_SNIPPETS:
-        if m in blob:
+        if m in norm_combo:
             tag(f"preference_center_text:{m[:48]}")
-            break
 
     if 'type="email"' in html_low or "type='email'" in html_low:
         tag("email_type_input")
 
-    if "unsubscribe" in blob or "unsubscribe" in html_low:
+    if "unsubscribe" in norm_combo or "unsubscribe" in html_low:
         tag("mentions_unsubscribe")
 
-    if "opt out" in blob or "opt-out" in blob:
+    if "opt out" in norm_combo or "opt-out" in norm_combo:
         tag("mentions_opt_out")
 
-    if "preferences" in blob or "communication preferences" in blob:
+    if "opt back in" in norm_combo:
+        tag("mentions_opt_back_in")
+
+    if "unsubscribed by accident" in norm_combo or "subscribe again" in norm_combo:
+        tag("mentions_resubscribe_cta")
+
+    if "preferences" in norm_combo or "communication preferences" in norm_combo:
         tag("mentions_preferences")
 
     primary = UnsubscribePageCategory.UNKNOWN

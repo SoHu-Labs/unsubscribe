@@ -35,6 +35,57 @@ def test_categorize_confirmation_trumps_generic() -> None:
     assert any(t.startswith("confirmation_text:") for t in tags)
 
 
+def test_categorize_confirmation_detected_from_html_when_visible_text_thin() -> None:
+    """SPAs sometimes leave innerText empty or generic while the message is already in the HTML."""
+    html = (
+        "<html><body><main><p>You\u2019ve unsubscribed.</p>"
+        "<p>You\u2019ll no longer receive this newsletter.</p></main></body></html>"
+    )
+    primary, tags = categorize_unsubscribe_page(
+        page_url="https://li.example/series",
+        page_title="Series email unsubscribe",
+        text_preview="",
+        html_excerpt=html,
+    )
+    assert primary == UnsubscribePageCategory.CONFIRMATION_LIKELY
+    conf_tags = [t for t in tags if t.startswith("confirmation_text:")]
+    assert len(conf_tags) >= 2
+
+
+def test_categorize_linkedin_style_manifest_copy_tags_resubscribe_cta() -> None:
+    """Session captures: post-confirm copy coexists with preference / resubscribe links."""
+    text = (
+        "You\u2019ve unsubscribed You\u2019ll no longer receive emails from LinkedIn about new "
+        "articles published in Create Possibilities. Manage other email preferences "
+        "Unsubscribed by accident? Subscribe again"
+    )
+    primary, tags = categorize_unsubscribe_page(
+        page_url="https://www.linkedin.com/series-notifications/",
+        page_title="Series email unsubscribe",
+        text_preview=text,
+        html_excerpt="",
+    )
+    assert primary == UnsubscribePageCategory.CONFIRMATION_LIKELY
+    assert "mentions_resubscribe_cta" in tags
+    assert "mentions_preferences" in tags
+
+
+def test_categorize_vox_style_opt_back_in_still_confirmation_primary() -> None:
+    vox = (
+        "you@example.com You will no longer receive any email of any kind from Vox. "
+        'If you would prefer to start receiving mail again, please press the "Opt Back In" '
+        "button below."
+    )
+    primary, tags = categorize_unsubscribe_page(
+        page_url="https://link.vox.com/manage/x",
+        page_title="",
+        text_preview=vox,
+        html_excerpt="",
+    )
+    assert primary == UnsubscribePageCategory.CONFIRMATION_LIKELY
+    assert "mentions_opt_back_in" in tags
+
+
 def test_categorize_preference_center() -> None:
     primary, tags = categorize_unsubscribe_page(
         page_url="https://prefs.example/",
