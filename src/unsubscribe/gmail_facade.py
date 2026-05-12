@@ -20,6 +20,8 @@ class GmailHeaderSummary:
     list_unsubscribe_post: str | None
     #: Mailbox that received the message (``Delivered-To`` / ``To``), for form prefills.
     delivered_to: str | None = None
+    #: RFC822 ``Message-ID`` header value (may include angle brackets), if present.
+    rfc_message_id: str | None = None
 
 
 def headers_from_summary(m: GmailHeaderSummary) -> dict[str, str]:
@@ -58,6 +60,14 @@ class GmailBackend(Protocol):
         """Return plain text (HTML stripped), up to 500 characters."""
         ...
 
+    def get_profile_email(self) -> str:
+        """Return the authenticated Gmail address."""
+        ...
+
+    def send_html_email(self, *, to: str, subject: str, html: str) -> None:
+        """Send a new HTML email to ``to`` from the authenticated account."""
+        ...
+
 
 class GmailFacade:
     """Thin façade: stable call shape + consistent error wrapping for orchestration code."""
@@ -86,6 +96,22 @@ class GmailFacade:
     def get_message_body_text(self, message_id: str) -> str:
         try:
             return self._backend.get_message_body_text(message_id)
+        except GmailTransportError:
+            raise
+        except Exception as e:
+            raise GmailTransportError(str(e)) from e
+
+    def get_profile_email(self) -> str:
+        try:
+            return self._backend.get_profile_email()
+        except GmailTransportError:
+            raise
+        except Exception as e:
+            raise GmailTransportError(str(e)) from e
+
+    def send_html_email(self, *, to: str, subject: str, html: str) -> None:
+        try:
+            self._backend.send_html_email(to=to, subject=subject, html=html)
         except GmailTransportError:
             raise
         except Exception as e:

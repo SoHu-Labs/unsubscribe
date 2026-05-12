@@ -1,4 +1,4 @@
-"""Gmail API read path (``users.messages.list`` / ``get``) using OAuth token file from disk."""
+"""Gmail API (``users.messages`` list/get/send, profile) using OAuth token file from disk."""
 
 from __future__ import annotations
 
@@ -19,7 +19,10 @@ from unsubscribe.gmail_facade import GmailHeaderSummary, GmailTransportError
 
 _ENV_OAUTH_TOKEN = "GOOGLE_OAUTH_TOKEN"
 
-_SCOPES = ("https://www.googleapis.com/auth/gmail.readonly",)
+_SCOPES = (
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+)
 
 _METADATA_HEADERS = (
     "List-Unsubscribe",
@@ -27,6 +30,7 @@ _METADATA_HEADERS = (
     "Subject",
     "From",
     "Date",
+    "Message-ID",
     "Delivered-To",
     "To",
 )
@@ -86,6 +90,7 @@ def _header_summary_from_get_api(get_api, list_item: dict) -> GmailHeaderSummary
         h["name"]: h["value"]
         for h in (meta.get("payload", {}).get("headers") or [])
     }
+    hl = {k.strip().lower(): (v or "").strip() for k, v in headers.items()}
     minimal = get_api(
         userId="me",
         id=mid,
@@ -94,13 +99,14 @@ def _header_summary_from_get_api(get_api, list_item: dict) -> GmailHeaderSummary
     return GmailHeaderSummary(
         id=mid,
         thread_id=meta.get("threadId", tid_hint),
-        from_=headers.get("From", ""),
-        subject=headers.get("Subject", ""),
-        date=headers.get("Date", ""),
+        from_=hl.get("from", headers.get("From", "")),
+        subject=hl.get("subject", headers.get("Subject", "")),
+        date=hl.get("date", headers.get("Date", "")),
         snippet=minimal.get("snippet", ""),
-        list_unsubscribe=headers.get("List-Unsubscribe"),
-        list_unsubscribe_post=headers.get("List-Unsubscribe-Post"),
+        list_unsubscribe=hl.get("list-unsubscribe") or None,
+        list_unsubscribe_post=hl.get("list-unsubscribe-post") or None,
         delivered_to=_recipient_mailbox_for_browser_forms(headers),
+        rfc_message_id=hl.get("message-id") or None,
     )
 
 
@@ -175,7 +181,7 @@ def strip_html_to_text(html: str) -> str:
 
 
 class GmailApiBackend:
-    """Gmail API backend: read via OAuth token file (``gmail.readonly`` only)."""
+    """Gmail API backend: OAuth token file (read + send for digest self-email)."""
 
     def __init__(
         self,
@@ -205,7 +211,9 @@ class GmailApiBackend:
                     ) from e
             else:
                 raise ValueError(
-                    f"OAuth token missing or invalid ({p}); re-authorize with gmail.readonly scope."
+                    f"OAuth token missing or invalid ({p}); re-authorize with at least "
+                    "https://www.googleapis.com/auth/gmail.readonly. "
+                    "Add gmail.send if you use digest topics with output.also_email_to."
                 )
         return cls(credentials=creds)
 
@@ -215,7 +223,7 @@ class GmailApiBackend:
         if not raw:
             raise ValueError(
                 f"Set {_ENV_OAUTH_TOKEN} to the authorized-user JSON file from your OAuth flow "
-                "(must include gmail.readonly)."
+                "(must include gmail.readonly; add gmail.send if you use digest output.also_email_to)."
             )
         return cls.from_token_path(Path(raw))
 
@@ -300,5 +308,42 @@ class GmailApiBackend:
             if len(text) > _MAX_BODY_TEXT_CHARS:
                 text = text[:_MAX_BODY_TEXT_CHARS]
             return text
+        except HttpError as e:
+            raise GmailTransportError(f"Gmail API error: {e}") from e
+
+    def get_profile_email(self) -> str:
+        """Authenticated account address (``users.getProfile``)."""
+        try:
+            service = self._service()
+            prof = service.users().getProfile(userId="me").execute()
+            email = (prof or {}).get("emailAddress")
+            if not isinstance(email, str) or not email.strip():
+                raise GmailTransportError(
+                    "Gmail getProfile response missing emailAddress."
+                )
+            return email.strip()
+        except HttpError as e:
+            raise GmailTransportError(f"Gmail API error: {e}") from e
+
+    def send_html_email(self, *, to: str, subject: str, html: str) -> None:
+        """Send a new message via ``users.messages.send`` (RFC822 built locally)."""
+        from email.message import EmailMessage
+
+        from_addr = self.get_profile_email()
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = from_addr
+        msg["To"] = to
+        msg.set_content(
+            "This digest is HTML; use an HTML-capable mail client.\n",
+            subtype="plain",
+            charset="utf-8",
+        )
+        msg.add_alternative(html, subtype="html", charset="utf-8")
+        raw_bytes = msg.as_bytes()
+        raw = base64.urlsafe_b64encode(raw_bytes).decode("ascii").rstrip("=")
+        try:
+            service = self._service()
+            service.users().messages().send(userId="me", body={"raw": raw}).execute()
         except HttpError as e:
             raise GmailTransportError(f"Gmail API error: {e}") from e

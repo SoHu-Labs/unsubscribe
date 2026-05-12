@@ -50,6 +50,12 @@ class _FakeBackend:
     def get_message_body_text(self, message_id: str) -> str:
         return self.bodies.get(message_id, f"Long body text for {message_id}.")
 
+    def get_profile_email(self) -> str:
+        return "fake-check@example.com"
+
+    def send_html_email(self, *, to: str, subject: str, html: str) -> None:
+        pass
+
 
 def test_headers_from_summary_round_trip() -> None:
     m = _msg("1", from_="A <a@a.com>", subject="S", date="Mon, 1 Jan 2024 00:00:00 +0000")

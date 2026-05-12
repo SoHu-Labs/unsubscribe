@@ -73,6 +73,22 @@ def test_facade_does_not_double_wrap_gmail_transport_error() -> None:
         facade.get_message_html("x")
 
 
+def test_facade_send_html_email_delegates_to_backend() -> None:
+    backend = MagicMock()
+    facade = GmailFacade(backend)
+    facade.send_html_email(to="a@b.com", subject="S", html="<p>x</p>")
+    backend.send_html_email.assert_called_once_with(
+        to="a@b.com", subject="S", html="<p>x</p>"
+    )
+
+
+def test_facade_get_profile_email_delegates_to_backend() -> None:
+    backend = MagicMock()
+    backend.get_profile_email.return_value = "me@gmail.com"
+    facade = GmailFacade(backend)
+    assert facade.get_profile_email() == "me@gmail.com"
+
+
 def test_facade_metadata_fixture_headers_match_expected_shape() -> None:
     """Lock committed fixture shape used by backend tests."""
     raw = json.loads((_FIXTURES / "metadata_message.json").read_text(encoding="utf-8"))

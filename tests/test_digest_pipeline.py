@@ -1,0 +1,207 @@
+"""Digest dry-run pipeline (collect + optional LLM extract)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+
+from unsubscribe.gmail_facade import GmailHeaderSummary
+
+from email_digest.config import load_topic_config
+from email_digest.pipeline import run_digest, run_digest_dry_run
+
+_TOPICS = Path(__file__).resolve().parent.parent / "topics"
+
+
+def _summary(
+    mid: str,
+    from_: str,
+    subject: str,
+    *,
+    rfc_message_id: str | None = None,
+) -> GmailHeaderSummary:
+    return GmailHeaderSummary(
+        id=mid,
+        thread_id="t",
+        from_=from_,
+        subject=subject,
+        date="Mon, 1 Jan 2024 00:00:00 +0000",
+        snippet="sn",
+        list_unsubscribe=None,
+        list_unsubscribe_post=None,
+        delivered_to=None,
+        rfc_message_id=rfc_message_id,
+    )
+
+
+def test_dry_run_filters_by_keep_list(tmp_path: Path) -> None:
+    cfg = load_topic_config(_TOPICS / "ai.yaml")
+    keep = tmp_path / "keep.json"
+    keep.write_text(
+        json.dumps(
+            {
+                "digest@news.com": {
+                    "subject": "Hi",
+                    "date_kept": "2026-01-01",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    facade = MagicMock()
+    facade.list_messages.return_value = [
+        _summary("1", "Digest <digest@news.com>", "A"),
+        _summary("2", "Other <other@x.com>", "B"),
+    ]
+    facade.get_message_html.return_value = "<html><body>Hi</body></html>"
+
+    fake_extract = '{"key_claims":["c1"],"entities":[],"numbers":[]}'
+
+    with patch("email_digest.pipeline.llm_complete", return_value=fake_extract):
+        out = run_digest_dry_run(
+            cfg,
+            facade=facade,
+            keep_list_path=keep,
+            max_results=50,
+            cache_db=tmp_path / "pipe.sqlite",
+        )
+
+    assert out["topic"] == "ai"
+    assert len(out["messages"]) == 1
+    assert out["messages"][0]["id"] == "1"
+    assert out["messages"][0]["extraction"] == json.loads(fake_extract)
+    assert out["trending"] == []
+    facade.list_messages.assert_called_once()
+
+
+def test_extraction_cache_skips_html_and_llm(tmp_path: Path) -> None:
+    cfg = load_topic_config(_TOPICS / "ai.yaml")
+    keep = tmp_path / "keep.json"
+    keep.write_text(
+        json.dumps({"digest@news.com": {"subject": "Hi", "date_kept": "2026-01-01"}}),
+        encoding="utf-8",
+    )
+    db = tmp_path / "c.sqlite"
+    from email_digest.cache import connect, put_extraction_json
+
+    conn = connect(db)
+    put_extraction_json(
+        conn, "ai", "1", {"key_claims": ["cached"], "entities": [], "numbers": []}
+    )
+    conn.close()
+
+    facade = MagicMock()
+    facade.list_messages.return_value = [
+        _summary("1", "Digest <digest@news.com>", "A"),
+    ]
+
+    with patch("email_digest.pipeline.llm_complete") as llm_m:
+        out = run_digest_dry_run(
+            cfg,
+            facade=facade,
+            keep_list_path=keep,
+            cache_db=db,
+        )
+    llm_m.assert_not_called()
+    facade.get_message_html.assert_not_called()
+    assert out["messages"][0]["extraction"]["key_claims"] == ["cached"]
+    assert out["trending"] == []
+
+
+def test_trending_clusters_with_stubbed_embed_and_cluster(tmp_path: Path) -> None:
+    cfg = load_topic_config(_TOPICS / "ai.yaml")
+    keep = tmp_path / "keep.json"
+    keep.write_text(
+        json.dumps({"digest@news.com": {"subject": "Hi", "date_kept": "2026-01-01"}}),
+        encoding="utf-8",
+    )
+    facade = MagicMock()
+    facade.list_messages.return_value = [
+        _summary("1", "Digest <digest@news.com>", "A"),
+    ]
+    facade.get_message_html.return_value = "<p>x</p>"
+    fake_extract = json.dumps(
+        {
+            "key_claims": ["claim a", "claim b", "claim c", "claim d"],
+            "entities": [],
+            "numbers": [],
+        }
+    )
+    x = np.ones((4, 3), dtype=np.float32)
+    labs = np.array([0, 0, 1, 1], dtype=np.int32)
+    with (
+        patch("email_digest.pipeline.llm_complete", return_value=fake_extract),
+        patch("email_digest.embed.embed_claim_texts", return_value=x),
+        patch("email_digest.cluster.cluster_labels", return_value=labs),
+        patch(
+            "email_digest.cluster.filter_clusters_by_cohesion",
+            side_effect=lambda emb, labels, **kw: labels,
+        ),
+    ):
+        out = run_digest_dry_run(
+            cfg,
+            facade=facade,
+            keep_list_path=keep,
+            cache_db=tmp_path / "tr.sqlite",
+        )
+    assert len(out["trending"]) == 2
+    assert {len(b["claims"]) for b in out["trending"]} == {2}
+
+
+def test_full_digest_writes_html(tmp_path: Path) -> None:
+    cfg = load_topic_config(_TOPICS / "ai.yaml")
+    keep = tmp_path / "keep.json"
+    keep.write_text(
+        json.dumps({"digest@news.com": {"subject": "Hi", "date_kept": "2026-01-01"}}),
+        encoding="utf-8",
+    )
+    repo = _TOPICS.parent
+    templates = repo / "templates"
+    fake_extract = json.dumps(
+        {"key_claims": ["a", "b"], "entities": [], "numbers": []}
+    )
+    fake_synth = json.dumps({"trending": [], "highlights": []})
+
+    facade = MagicMock()
+    facade.list_messages.return_value = [
+        _summary(
+            "1",
+            "Digest <digest@news.com>",
+            "Subj",
+            rfc_message_id="<abc@mail.gmail.com>",
+        ),
+    ]
+    facade.get_message_html.return_value = "<html><body>text</body></html>"
+    facade.get_profile_email.return_value = "digest@news.com"
+
+    with (
+        patch("email_digest.pipeline.llm_complete", return_value=fake_extract),
+        patch("email_digest.synthesis.llm_complete", return_value=fake_synth),
+        patch(
+            "email_digest.embed.embed_claim_texts",
+            return_value=np.zeros((2, 5), dtype=np.float32),
+        ),
+        patch(
+            "email_digest.cluster.cluster_labels",
+            return_value=np.array([-1, -1], dtype=np.int32),
+        ),
+    ):
+        out = run_digest(
+            cfg,
+            facade=facade,
+            keep_list_path=keep,
+            cache_db=tmp_path / "full.sqlite",
+            dry_run=False,
+            output_dir=tmp_path / "html_out",
+            template_dir=templates,
+        )
+    assert "output_html" in out
+    p = Path(out["output_html"])
+    assert p.is_file()
+    assert "<!DOCTYPE html>" in p.read_text(encoding="utf-8")[:500]
+    facade.send_html_email.assert_called_once()
+    assert out.get("emailed_to") == "digest@news.com"

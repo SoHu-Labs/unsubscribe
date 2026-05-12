@@ -39,8 +39,20 @@ def _msg(mid: str, **kw: object) -> GmailHeaderSummary:
 
 
 class _B:
+    def list_messages(self, query: str, *, max_results: int = 10):
+        return []
+
     def get_message_html(self, mid: str) -> str:
         return '<html><a href="https://x.us1.list-manage.com/u">Unsubscribe</a></html>'
+
+    def get_message_body_text(self, message_id: str) -> str:
+        return ""
+
+    def get_profile_email(self) -> str:
+        return "user@example.com"
+
+    def send_html_email(self, *, to: str, subject: str, html: str) -> None:
+        pass
 
 
 def test_one_click_needs_browser_followup_only_202() -> None:

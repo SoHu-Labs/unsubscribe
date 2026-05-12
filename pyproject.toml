@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unsubscribe"
-description = "Newsletter unsubscribe assistant (see PLAN.md)"
+description = "Gmail unsubscribe + topic digest; see README and docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
@@ -12,10 +12,17 @@ version = "0.1.0"
 dependencies = [
     "google-api-python-client>=2.0.0",
     "google-auth>=2.0.0",
+    "litellm>=1.55.0",
+    "numpy>=1.26.0",
+    "hdbscan>=0.8.33",
+    "pyyaml>=6.0.0",
+    "sentence-transformers>=3.0.0",
+    "jinja2>=3.1.0",
 ]
 
 [project.scripts]
 unsubscribe = "unsubscribe.cli:main"
+email-digest = "email_digest.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "selenium>=4"]

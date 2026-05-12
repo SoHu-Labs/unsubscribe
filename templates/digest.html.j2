@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ display_name }} — digest</title>
+  <style>
+    :root { color-scheme: dark light; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 1rem 1.25rem; line-height: 1.45;
+      background: #0f1115; color: #e8eaed; }
+    @media (prefers-color-scheme: light) {
+      body { background: #fafafa; color: #1a1a1a; }
+      .card { background: #fff; border-color: #d0d7de; }
+      a { color: #0969da; }
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.35rem; }
+    .meta { font-size: 0.85rem; opacity: 0.85; margin-bottom: 1.25rem; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; font-weight: 600; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 0.75rem 1rem; margin: 0.5rem 0; }
+    ul { margin: 0.35rem 0 0 1.1rem; padding: 0; }
+    li { margin: 0.2rem 0; }
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    details { margin: 0.5rem 0; border: 1px solid #30363d; border-radius: 6px; padding: 0.35rem 0.6rem; background: #161b22; }
+    summary { cursor: pointer; font-weight: 500; }
+    .muted { opacity: 0.8; font-size: 0.85rem; }
+    footer { margin-top: 2rem; font-size: 0.8rem; opacity: 0.75; }
+  </style>
+</head>
+<body>
+  <h1>{{ display_name }}</h1>
+  <div class="meta">Topic <code>{{ topic }}</code> · Generated {{ generated_at }}</div>
+
+  <h2>Trending</h2>
+  {% if trending %}
+    {% for t in trending %}
+    <div class="card">
+      <div><strong>{{ t.title }}</strong></div>
+      <p class="muted">{{ t.synthesis }}</p>
+      {% if t.rfc_message_ids %}
+      <div class="muted">Sources:
+        {% for mid in t.rfc_message_ids %}
+          <span><code>{{ mid }}</code>{% if not loop.last %}, {% endif %}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No multi-source clusters this run.</p>
+  {% endif %}
+
+  <h2>Highlights</h2>
+  {% if highlights %}
+    {% for h in highlights %}
+    <div class="card">
+      <div><strong>{{ h.subject }}</strong> <span class="muted">· {{ h.from }}</span></div>
+      {% if h.bullets %}
+      <ul>
+        {% for b in h.bullets %}<li>{{ b }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      <div class="muted">
+        {% if h.rfc_message_id %}
+          <a href="{{ spark_deeplink(h.rfc_message_id) }}">Open in Spark</a>
+          {% if h.mailto_href %} · <a href="{{ h.mailto_href }}">mailto</a>{% endif %}
+        {% elif h.mailto_href %}
+          <a href="{{ h.mailto_href }}">mailto</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No highlights section from synthesis.</p>
+  {% endif %}
+
+  <h2>Sources</h2>
+  {% for m in messages %}
+  <details>
+    <summary>{{ m.subject }} <span class="muted">· {{ m.from }}</span></summary>
+    <p class="muted">{{ m.date }}</p>
+    {% if m.extraction and m.extraction.key_claims %}
+    <ul>
+      {% for c in m.extraction.key_claims %}<li>{{ c }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    <p>
+      {% if m.spark_href %}
+        <a href="{{ m.spark_href }}">Open in Spark</a>
+      {% endif %}
+      {% if m.mailto_href %}
+        {% if m.spark_href %} · {% endif %}<a href="{{ m.mailto_href }}">mailto</a>
+      {% endif %}
+    </p>
+  </details>
+  {% endfor %}
+
+  <footer>email-digest · model output is not legal or medical advice.</footer>
+</body>
+</html>

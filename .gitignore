@@ -224,3 +224,11 @@ token.json
 
 # Local Brave page captures (browser batch); may contain tokens
 .unsubscribe_page_capture/
+
+# Digest SQLite + local caches (see email_digest.paths / DIGEST_CACHE_DB)
+cache/
+
+# Generated HTML digests
+output/
+
+.DS_Store

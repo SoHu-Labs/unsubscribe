@@ -105,6 +105,7 @@ def test_list_messages_calls_metadata_then_minimal_per_message(mock_build: Magic
             list_unsubscribe="<https://example.com/unsub?id=1>",
             list_unsubscribe_post="List-Unsubscribe=One-Click",
             delivered_to="reader@example.com",
+            rfc_message_id="<weekly-abc@mail.example.com>",
         )
     ]
 
@@ -123,6 +124,7 @@ def test_list_messages_calls_metadata_then_minimal_per_message(mock_build: Magic
             "Subject",
             "From",
             "Date",
+            "Message-ID",
             "Delivered-To",
             "To",
         ],
@@ -208,3 +210,34 @@ def test_get_message_body_text_strips_html_and_truncates(mock_build: MagicMock) 
     full = ("Hi " + long_inner.strip())
     assert out == full[:500]
     assert len(out) == 500
+
+
+@patch("unsubscribe.gmail_api_backend.build")
+def test_get_profile_email(mock_build: MagicMock) -> None:
+    mock_service = MagicMock()
+    mock_build.return_value = mock_service
+    mock_service.users.return_value.getProfile.return_value.execute.return_value = {
+        "emailAddress": "reader@gmail.com",
+    }
+    backend = GmailApiBackend(credentials=MagicMock())
+    assert backend.get_profile_email() == "reader@gmail.com"
+    mock_service.users.return_value.getProfile.assert_called_once_with(userId="me")
+
+
+@patch("unsubscribe.gmail_api_backend.build")
+def test_send_html_email_encodes_and_posts_raw(mock_build: MagicMock) -> None:
+    mock_service = MagicMock()
+    mock_build.return_value = mock_service
+    send_chain = mock_service.users.return_value.messages.return_value.send
+    send_chain.return_value.execute.return_value = {"id": "sent1"}
+    mock_service.users.return_value.getProfile.return_value.execute.return_value = {
+        "emailAddress": "me@gmail.com",
+    }
+    backend = GmailApiBackend(credentials=MagicMock())
+    backend.send_html_email(to="me@gmail.com", subject="Digest", html="<p>Hi</p>")
+    send_chain.assert_called_once()
+    call_kw = send_chain.call_args.kwargs
+    assert call_kw["userId"] == "me"
+    raw = call_kw["body"]["raw"]
+    assert isinstance(raw, str)
+    assert len(raw) > 10
