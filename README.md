@@ -56,6 +56,7 @@ Cron / launchd: start from **`scripts/digest-cron.example.sh`** (set `GOOGLE_OAU
 
 ## Docs
 
+- `docs/AGENT_PLAN_CONTRACT.md` — **how to write plan slices** (permissions, caveats, follow-ups, acceptance) so implementers do not guess
 - `docs/PROJECT_BRIEF_EMAIL_SUMMARIES.md` — digest engine project brief
 - `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md` — implementation plan
 - `docs/INVENTORY.md` — code inventory

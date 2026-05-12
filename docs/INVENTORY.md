@@ -1,6 +1,6 @@
 # Code Inventory — email-digest
 
-This repo was created by merging the former `unsubscribe` project. Gmail API + façade live in `src/unsubscribe/`; digest email (when enabled) uses the same OAuth token and `users.messages.send`, not SMTP. The digest engine is `src/email_digest/`. Milestone plan: `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md`.
+This repo was created by merging the former `unsubscribe` project. Gmail API + façade live in `src/unsubscribe/`; digest email (when enabled) uses the same OAuth token and `users.messages.send`, not SMTP. The digest engine is `src/email_digest/`. Milestone plan: `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md`. **Plan slices** MUST follow `docs/AGENT_PLAN_CONTRACT.md` so handoffs are machine-checkable.
 
 ---
 

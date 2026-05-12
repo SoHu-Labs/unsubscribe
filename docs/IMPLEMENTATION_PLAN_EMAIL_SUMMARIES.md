@@ -1,5 +1,7 @@
 # Implementation Plan — email-digest (merged repo)
 
+**Agent / LLM implementers:** each slice in this document MUST use the section checklist and phrasing rules in **`docs/AGENT_PLAN_CONTRACT.md`** (invariants, permissions table, caveats four-liner, follow-up table, acceptance commands). Underspecified slices are invalid handoffs.
+
 The `unsubscribe` project was renamed to `email-digest`. The existing Gmail API backend, façade, and utilities in `src/unsubscribe/` are **shared** by both the unsubscribe and digest features. This plan covers adding the digest engine.
 
 ## Repo structure (target)
