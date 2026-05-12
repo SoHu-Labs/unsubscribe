@@ -4,6 +4,52 @@
 
 The `unsubscribe` project was renamed to `email-digest`. The existing Gmail API backend, façade, and utilities in `src/unsubscribe/` are **shared** by both the unsubscribe and digest features. This plan covers adding the digest engine.
 
+## Implementation progress (canonical status — read this first)
+
+**Last updated:** 2026-05-12 — bump this date whenever you change **Remaining scope** or merge a user-visible slice.
+
+This section is the **continuity contract** for any implementer (human or LLM): status here overrides informal chat. Named slices below hold acceptance tests and invariants; this section holds **what is done vs what is still in scope**.
+
+### Shipped (summary)
+
+| Milestone / slice | Delivered (high level) |
+|-------------------|-------------------------|
+| M2–M4 (narrative in doc) | Digest engine: `src/email_digest/*`, topics YAML, templates, pipeline, cache, LLM, HTML, Spark links, optional Gmail send |
+| **M5** | CLI: `version`, `cost`/`--json`, `topics`, `run`/`--all`/`--strict`, deferred Gmail for `--all` when nothing runs, failure logs, cron example |
+| **C** | `docs/LM_STUDIO_DIGEST.md`, `resolve_model_alias()` in `llm.py`, tests |
+| **D** | Extra Spark URL encoding regression tests (contract frozen in CI) |
+| **B** | `is_digest_source_candidate()` → delegates to `is_unsubscribable_newsletter` |
+| **A** | `digest candidates <topic>` — Gmail list + JSON, no LLM |
+| **E** | `digest candidates` adds `sender_key`, `keep_list_kept`, `--keep-list` (parity with `digest run` gate) |
+
+**Acceptance command for “repo still healthy”:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+
+### Remaining scope (prioritized)
+
+| ID | Item | Type | Status | Next step when resuming |
+|----|------|------|--------|---------------------------|
+| R1 | **Keep-list mutations from digest CLI** (`digest keep add|remove`, batch from JSON, or TUI) | product / CLI | **Not shipped** | New slice (§7): goal = persist to `~/.unsubscribe_keep.json` only; tests with `tmp_path`; no duplicate store |
+| R2 | **`digest candidates --all`** (every topic, one OAuth, ordered output) | CLI | **Not shipped** | New slice: mirror `digest run --all` ordering + Gmail deferral rules |
+| R3 | **`run_digest` uses `digest_source_candidate`** (filter, warn-only log, or rank) | pipeline | **Not shipped** | New slice: explicit user-visible behavior + tests; today pipeline only uses keep-list + query |
+| R4 | **Digest “walkthrough” UX** (M2 §4 style: step through rows like unsubscribe flow) | product | **Not shipped** | Large slice or app; `digest candidates` JSON is the current substitute |
+| R5 | **Spark scheme on-device check** | manual | **Open (F2)** | User verifies `readdle-spark://…` on hardware; code change only if Readdle contract differs |
+| R6 | **Real sender addresses in `topics/*.yaml`** | content | **Open** | Replace TODO senders; optional CI: fail if `TODO-` in senders |
+| R7 | **Minimax / `cheap` alias** | LLM | **Deferred** | Plan RESOLVED: skipped until endpoint known |
+| R8 | **Formal §7 slice blocks for legacy M2–M4 headings** | docs | **Optional** | Retrofit only if reopening those milestones for regression work |
+
+### Out of scope (unless plan is amended)
+
+- Parallel Gmail collector (IMAP, etc.) — brief forbids
+- Second keep-list / digest-only persistence file — brief forbids
+
+### How to update this document when you ship work
+
+1. Move or shrink rows in **Remaining scope**; add a row to **Shipped** (or extend an existing shipped row).
+2. Set **Last updated** to the merge/commit date.
+3. Add or refresh the **named slice** block (§7 template) for the work you merged; link it from **Shipped** if not already listed.
+
+---
+
 ## Repo structure (target)
 
 ```
@@ -164,13 +210,14 @@ Send the rendered HTML with `users.messages.send` using the same OAuth token as 
 
 ## Plan status (scope outside individual slices)
 
+Canonical rows for **done vs remaining** live in **Implementation progress** at the top of this file. The table below is a short index.
+
 | Area | Status | Notes |
 |------|--------|--------|
-| M2–M4 (digest engine, cache, synthesis, HTML) | **Shipped** in repo | Older plan sections are narrative; no separate contract blocks retrofitted unless we reopen a milestone. |
-| M5 (cron, CLI polish, cost dashboard) | **Shipped** — see **Slice: M5** below | Acceptance is the contract of record. |
-| **Slices C → D → B → A** (LM Studio runbook, Spark contract tests, digest classification, `digest candidates`) | **Shipped** — sections below **Post-M5** | Smallest-scope-first order; closes most of F1/F3 documentation path; F2 remains manual. |
-| **Slice E** (`digest candidates` keep-list preview fields) | **Shipped** — section below slice A | Extends candidates JSON; no keep mutations. |
-| **STILL OPEN** (below) | Product / env verification | Not blocking; F2 device check; interactive keep-list editing still manual outside CLI. |
+| M2–M4 (digest engine, cache, synthesis, HTML) | **Shipped** in repo | Narrative sections only; see **Implementation progress → Shipped**. |
+| M5 | **Shipped** | See **Slice: M5** |
+| Slices C, D, B, A, E | **Shipped** | See **Implementation progress** + Post-M5 slice headings |
+| **Remaining** | See **Implementation progress → Remaining scope** | Do not duplicate long lists here—edit the R1–R8 table there. |
 
 ---
 
@@ -333,6 +380,8 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 
 ## STILL OPEN
 
-- **`LM_STUDIO_MODEL`** / **`LM_STUDIO_MODEL_SMART`** — must match the model ids LM Studio’s Local Server exposes. **Defaults to standardize on:** (1) **Qwen3.5 4B MLX** → on-disk `mlx-community/Qwen3.5-4B-MLX-4bit` (`local` / extraction); (2) **Qwen3-4B-Instruct** → on-disk `lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` (`local_smart` / local synthesis). Paths from **`local-chat`** `src/llm.py` (`MODEL_VARIANTS`); UI strings may differ from folder names.
-- **Spark URL scheme** — ship `readdle-spark://openmessage?messageId=<url-encoded RFC822 Message-ID>` as in this plan; **do not block** implementation on hardware. README notes on-device verification; adjust `spark_link.py` if Readdle’s scheme changes.
-- **Sender selection** — user must review digest candidates; same **`~/.unsubscribe_keep.json`** workflow as unsubscribe with inverse semantics (see `docs/INVENTORY.md`).
+Cross-check with **Implementation progress → Remaining scope** (canonical). Bullets here are non-normative reminders.
+
+- **`LM_STUDIO_MODEL`** / **`LM_STUDIO_MODEL_SMART`** — operator must match LM Studio Local Server strings; see `docs/LM_STUDIO_DIGEST.md` (Slice C).
+- **Spark URL scheme** — ship `readdle-spark://openmessage?messageId=<url-encoded RFC822 Message-ID>`; on-device verification (**F2 / R5**); adjust `spark_link.py` if Readdle changes.
+- **Sender selection** — `digest candidates` + keep flags shipped (**A, E**); interactive keep / walkthrough = **R1, R4** in **Implementation progress**.
