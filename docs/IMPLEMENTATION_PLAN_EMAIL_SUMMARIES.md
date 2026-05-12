@@ -225,6 +225,8 @@ Send the rendered HTML with `users.messages.send` using the same OAuth token as 
 | F2 | On-device verification of Spark `readdle-spark://` scheme | manual | no |
 | F3 | Sender allowlist UX (`~/.unsubscribe_keep.json`) | product | no |
 
+**Post-M5:** Any new behavior (digest candidate preview CLI, LM Studio runbook hardening, classifier integration) needs its **own** named slice using the §7 template in `docs/AGENT_PLAN_CONTRACT.md` before implementation; do not extend M5 retroactively.
+
 ---
 
 ## RESOLVED QUESTIONS

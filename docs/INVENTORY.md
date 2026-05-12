@@ -13,26 +13,32 @@ This repo was created by merging the former `unsubscribe` project. Gmail API + f
 | `src/unsubscribe/timed_run.py` | `TimedRun` monotonic progress timer, `format_progress_line` | Both |
 | `src/unsubscribe/keep_list.py` | JSON-based persistent set (`load`, `save`, `add`, `is_kept`) — **same file as unsubscribe** (`~/.unsubscribe_keep.json` by default in `cli.py`); digest uses **inverse semantics** (kept senders = digest sources, not unsubscribe targets). No second persistence file. | Both |
 
-## Already in repo (partially reusable — need minor adaptation)
+## Digest engine (shipped under `src/email_digest/`)
 
-| File | What to adapt |
+Entry points: `python -m email_digest` (`__main__` → `cli.main`), console script `email-digest` in `pyproject.toml`. **`digest run --all`** defers `GmailApiBackend.from_env()` until at least one topic reaches `run_digest` (see M5 in the implementation plan).
+
+| File | Purpose |
 |---|---|
-| `src/unsubscribe/classifier.py` | `is_unsubscribable_newsletter` → invert logic for `is_digestible` (keep vs discard) |
-| `src/unsubscribe/cli.py` | Add `digest` subcommand alongside existing `unsubscribe` commands |
+| `cli.py` | `digest` subcommands: `version`, `cost` (human + `--json`), `topics` (`--json`, `--strict`), `run` (`--all`, `--strict`, `--dry-run`, …); passes through `unsubscribe` argv to `unsubscribe.cli` |
+| `pipeline.py` | Orchestrates query → list → keep-list filter → extract (LLM) → cache → trending (embed + cluster) → optional synthesis + HTML + `maybe_email_digest` |
+| `gmail_query.py` | Builds Gmail `q` strings from topic YAML (`window_days`, senders, folders, `since`) |
+| `config.py` | `TopicConfig` + `load_topic_config` from `topics/<stem>.yaml` |
+| `llm.py` | litellm `complete`, aliases, optional LLM call logging into SQLite |
+| `cache.py` | SQLite: `extractions`, `embeddings`, `llm_calls`; `cost_report_payload` / rollups for `digest cost --json` |
+| `embed.py` | sentence-transformers embeddings keyed by claim hash |
+| `cluster.py` | HDBSCAN-based trending groups |
+| `synthesis.py` | Persona synthesis JSON via LLM |
+| `render.py` | Jinja2 HTML digest |
+| `spark_link.py` | `readdle-spark://` deeplinks from RFC822 ids |
+| `digest_mail.py` | Optional Gmail API send for `also_email_to` |
+| `paths.py` | `repo_root()`, default cache path under `<repo>/cache/` |
 
-## To be built (new code for digest engine)
+## Optional / not wired to digest yet
 
-| Module | Path | Dependencies |
-|---|---|---|
-| LLM provider | `src/email_digest/llm.py` | litellm |
-| Digest pipeline | `src/email_digest/pipeline.py` | Gmail API, LLM; per-message fetch/extract errors append to `output/_failures/<YYYY-MM-DD>.log`, run continues |
-| Embeddings | `src/email_digest/embed.py` | sentence-transformers |
-| Clustering | `src/email_digest/cluster.py` | hdbscan |
-| Spark deeplinks | `src/email_digest/spark_link.py` | stdlib only |
-| HTML renderer | `src/email_digest/render.py` | jinja2 |
-| Synthesis prompt | `src/email_digest/synthesis.py` | litellm |
-| SQLite cache | `src/email_digest/cache.py` | sqlite3 (stdlib) |
-| Config loader | `src/email_digest/config.py` | pyyaml |
+| File | Notes |
+|---|---|
+| `src/unsubscribe/classifier.py` | Unsubscribe newsletter scoring only; digest does **not** import it today. A future “digest candidates” UX could reuse or invert signals (see plan follow-up F3). |
+| `src/unsubscribe/cli.py` | Still owns the **`unsubscribe`** console script and walkthrough commands; digest CLI lives in `email_digest.cli`, not here. |
 
 ## Patterns to borrow from sibling projects
 
