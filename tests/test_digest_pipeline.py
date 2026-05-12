@@ -114,7 +114,7 @@ def test_digest_messages_carry_digest_source_candidate(
     facade.get_message_html.return_value = "<html><body>x</body></html>"
     fake_extract = '{"key_claims":["c"],"entities":[],"numbers":[]}'
 
-    with patch("email_digest.pipeline.llm_complete", return_value=fake_extract):
+    with patch("email_digest.pipeline.llm_complete", return_value=fake_extract) as llm_m:
         out = run_digest_dry_run(
             cfg,
             facade=facade,
@@ -126,6 +126,53 @@ def test_digest_messages_carry_digest_source_candidate(
     assert len(out["messages"]) == 2
     assert out["messages"][0]["digest_source_candidate"] is True
     assert out["messages"][1]["digest_source_candidate"] is False
+    assert out["messages"][1]["extraction"] == {
+        "key_claims": [],
+        "entities": [],
+        "numbers": [],
+    }
+    assert llm_m.call_count == 1
+    facade.get_message_html.assert_called_once()
+
+
+def test_digest_skips_llm_when_non_candidate_but_cache_wins(
+    tmp_path: Path,
+) -> None:
+    """SQLite cache must still apply when list metadata would skip extraction (Slice G)."""
+    cfg = load_topic_config(_TOPICS / "ai.yaml")
+    keep = tmp_path / "keep.json"
+    keep.write_text(
+        json.dumps({"digest@news.com": {"subject": "Hi", "date_kept": "2026-01-01"}}),
+        encoding="utf-8",
+    )
+    db = tmp_path / "skipcache.sqlite"
+    from email_digest.cache import connect, put_extraction_json
+
+    conn = connect(db)
+    put_extraction_json(
+        conn,
+        "ai",
+        "1",
+        {"key_claims": ["from-cache"], "entities": [], "numbers": []},
+    )
+    conn.close()
+
+    facade = MagicMock()
+    facade.list_messages.return_value = [
+        _summary("1", "Digest <digest@news.com>", "No list headers"),
+    ]
+
+    with patch("email_digest.pipeline.llm_complete") as llm_m:
+        out = run_digest_dry_run(
+            cfg,
+            facade=facade,
+            keep_list_path=keep,
+            cache_db=db,
+        )
+    llm_m.assert_not_called()
+    facade.get_message_html.assert_not_called()
+    assert out["messages"][0]["digest_source_candidate"] is False
+    assert out["messages"][0]["extraction"]["key_claims"] == ["from-cache"]
 
 
 def test_extraction_cache_skips_html_and_llm(tmp_path: Path) -> None:

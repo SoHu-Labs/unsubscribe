@@ -138,12 +138,20 @@ def run_digest(
             if sk is None or sk not in keep:
                 continue
             try:
+                h = headers_from_summary(m)
+                digest_source_candidate = is_digest_source_candidate(h)
                 cached = get_extraction_json(conn, cfg.name, m.id)
                 if cached is not None:
                     try:
                         extraction = json.loads(cached)
                     except json.JSONDecodeError:
                         extraction = {"parse_error": True, "raw": cached[:2000]}
+                elif not digest_source_candidate:
+                    extraction = {
+                        "key_claims": [],
+                        "entities": [],
+                        "numbers": [],
+                    }
                 else:
                     html = facade.get_message_html(m.id)
                     plain = strip_html_to_text(html)[:_MAX_BODY_CHARS]
@@ -162,7 +170,6 @@ def run_digest(
                         extraction = {"parse_error": True, "raw": raw[:2000]}
                     else:
                         put_extraction_json(conn, cfg.name, m.id, extraction)
-                h = headers_from_summary(m)
                 out_messages.append(
                     {
                         "id": m.id,
@@ -171,7 +178,7 @@ def run_digest(
                         "subject": m.subject,
                         "date": m.date,
                         "extraction": extraction,
-                        "digest_source_candidate": is_digest_source_candidate(h),
+                        "digest_source_candidate": digest_source_candidate,
                     }
                 )
             except Exception as exc:

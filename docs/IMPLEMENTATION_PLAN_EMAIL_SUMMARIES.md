@@ -21,24 +21,24 @@ This section is the **continuity contract** for any implementer (human or LLM): 
 | **B** | `is_digest_source_candidate()` → delegates to `is_unsubscribable_newsletter` |
 | **A** | `digest candidates <topic>` — Gmail list + JSON, no LLM |
 | **E** | `digest candidates` adds `sender_key`, `keep_list_kept`, `--keep-list` (parity with `digest run` gate) |
-| **F** | Each `run_digest` / dry-run **`messages[]`** item includes **`digest_source_candidate`** (same classifier as slice B / `digest candidates`; **no filtering** yet) |
+| **F** | Each `run_digest` / dry-run **`messages[]`** item includes **`digest_source_candidate`** (same classifier as slice B / `digest candidates`) |
+| **G** (R3b) | When `digest_source_candidate` is false: **no** `get_message_html`, **no** `llm_complete`, **no** `put_extraction_json`; empty `key_claims` / `entities` / `numbers`. Cached extractions still honored. |
 
 **Acceptance command for “repo still healthy”:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
 
 ### Remaining scope (prioritized)
 
-**Order for implementers:** rows are sorted by **approximate implementation effort** (smallest first) for **code/product** work (**Pick** 1–4), then **operator / manual / deferred** (**Pick** 5–7). **Pick 8 (R8)** is **always last**: formal docs must **follow** shipped behavior—skip under tight LLM budget.
+**Order for implementers:** rows are sorted by **approximate implementation effort** (smallest first) for **code/product** work (**Pick** 1–3), then **operator / manual / deferred** (**Pick** 4–6). **Pick 7 (R8)** is **always last**: formal docs must **follow** shipped behavior—skip under tight LLM budget.
 
 | Pick | ID | Item | Type | Status | Next step when resuming |
 |------|----|------|------|--------|---------------------------|
-| 1 | R3b | **Optional:** skip or down-rank LLM / trending work when `digest_source_candidate` is false | pipeline | **Not shipped** | New slice: user-visible policy + tests (**Slice F** only annotates today) |
-| 2 | R2 | **`digest candidates --all`** (every topic, one OAuth, ordered output) | CLI | **Not shipped** | New slice: mirror `digest run --all` ordering + Gmail deferral rules |
-| 3 | R1 | **Keep-list mutations from digest CLI** (`digest keep add|remove`, batch from JSON, or TUI) | product / CLI | **Not shipped** | New slice (§7): goal = persist to `~/.unsubscribe_keep.json` only; tests with `tmp_path`; no duplicate store |
-| 4 | R4 | **Digest “walkthrough” UX** (M2 §4 style: step through rows like unsubscribe flow) | product | **Not shipped** | Large slice or app; `digest candidates` JSON is the current substitute |
-| 5 | R6 | **Real sender addresses in `topics/*.yaml`** | content | **Open** | Replace TODO senders; optional CI: fail if `TODO-` in senders (often **human** edits, minimal LLM) |
-| 6 | R5 | **Spark scheme on-device check** | manual | **Open (F2)** | User verifies `readdle-spark://…` on hardware; code change only if Readdle contract differs (**no LLM** unless bug found) |
-| 7 | R7 | **Minimax / `cheap` alias** | LLM | **Deferred** | Plan RESOLVED: skipped until endpoint known |
-| 8 | R8 | **Formal §7 slice blocks for legacy M2–M4 headings** | docs | **Optional** | **After** code is stable; retrofit only if reopening those milestones—**defer if budget is tight** |
+| 1 | R2 | **`digest candidates --all`** (every topic, one OAuth, ordered output) | CLI | **Not shipped** | New slice: mirror `digest run --all` ordering + Gmail deferral rules |
+| 2 | R1 | **Keep-list mutations from digest CLI** (`digest keep add|remove`, batch from JSON, or TUI) | product / CLI | **Not shipped** | New slice (§7): goal = persist to `~/.unsubscribe_keep.json` only; tests with `tmp_path`; no duplicate store |
+| 3 | R4 | **Digest “walkthrough” UX** (M2 §4 style: step through rows like unsubscribe flow) | product | **Not shipped** | Large slice or app; `digest candidates` JSON is the current substitute |
+| 4 | R6 | **Real sender addresses in `topics/*.yaml`** | content | **Open** | Replace TODO senders; optional CI: fail if `TODO-` in senders (often **human** edits, minimal LLM) |
+| 5 | R5 | **Spark scheme on-device check** | manual | **Open (F2)** | User verifies `readdle-spark://…` on hardware; code change only if Readdle contract differs (**no LLM** unless bug found) |
+| 6 | R7 | **Minimax / `cheap` alias** | LLM | **Deferred** | Plan RESOLVED: skipped until endpoint known |
+| 7 | R8 | **Formal §7 slice blocks for legacy M2–M4 headings** | docs | **Optional** | **After** code is stable; retrofit only if reopening those milestones—**defer if budget is tight** |
 
 ### Out of scope (unless plan is amended)
 
@@ -220,7 +220,7 @@ Canonical rows for **done vs remaining** live in **Implementation progress** at 
 | M2–M4 (digest engine, cache, synthesis, HTML) | **Shipped** in repo | Narrative sections only; see **Implementation progress → Shipped**. |
 | M5 | **Shipped** | See **Slice: M5** |
 | Slices C, D, B, A, E | **Shipped** | See **Implementation progress** + Post-M5 slice headings |
-| **Remaining** | See **Implementation progress → Remaining scope** | Do not duplicate long lists here—edit the R1–R8 table there. |
+| **Remaining** | See **Implementation progress → Remaining scope** | Do not duplicate long lists here—edit the **Remaining scope** table there. |
 
 ---
 
@@ -382,11 +382,28 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 
 - **Caveats & footguns:**
   1. **Symptom:** Flag disagrees with `digest candidates` for same id. **Cause:** different header fields available in `GmailHeaderSummary` vs list response. **Wrong fix:** duplicate classifier logic. **Right fix:** same `headers_from_summary` + `is_digest_source_candidate` path as CLI.
-  2. **Symptom:** Trending changes when annotation added. **Cause:** accidentally filtering `out_messages` in the same change. **Wrong fix:** ship silent behavior change. **Right fix:** this slice is metadata-only; **R3b** owns filter/down-rank.
+  2. **Symptom:** Trending changes when annotation added. **Cause:** accidentally filtering `out_messages` in the same change. **Wrong fix:** ship silent behavior change. **Right fix:** this slice is metadata-only; extraction skip is **Slice G**.
 
-- **Procedure:** 1) After extraction resolved for a kept row, `h = headers_from_summary(m)`; append `digest_source_candidate=is_digest_source_candidate(h)`. 2) Tests: two rows same keep key, one with List-Unsubscribe → true/false split. 3) Update **Implementation progress** (Shipped + **R3** → **R3b** in Remaining).
+- **Procedure:** 1) After extraction resolved for a kept row, `h = headers_from_summary(m)`; append `digest_source_candidate=is_digest_source_candidate(h)`. 2) Tests: two rows same keep key, one with List-Unsubscribe → true/false split. 3) Update **Implementation progress**.
 - **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
-- **Follow-ups:** **R3b** — optional skip/down-rank when `digest_source_candidate` is false.
+- **Follow-ups:** **Slice G** — skip body fetch + LLM when `digest_source_candidate` is false (R3b).
+
+### Slice: G — Skip extraction for non-`digest_source_candidate` rows (R3b)
+
+- **Goal:** Save Gmail body fetches and extraction LLM calls for kept senders whose **list** metadata does not classify as a digest-source candidate, while still returning the row in **`messages`** with an empty structured extraction. **Cached** extractions from SQLite are unchanged (still loaded and used when present).
+- **Non-goals:** Removing rows from `messages`; changing keep-list or Gmail query; synthesis-only skips (handled implicitly when `key_claims` empty).
+- **Invariants:** If `digest_source_candidate` is **false** and there is **no** cache hit, the code **must not** call `facade.get_message_html`, **`llm_complete`**, or **`put_extraction_json`** for that message. Extraction object is exactly `{"key_claims": [], "entities": [], "numbers": []}`. If cache hit, behavior matches pre–slice G. **`digest_source_candidate`** on the row still reflects headers-only classification.
+- **Coupling:** `src/email_digest/pipeline.py`, `tests/test_digest_pipeline.py`, `README.md`, `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md`, `docs/INVENTORY.md`.
+- **Preconditions:** Slice F merged.
+- **Permissions & environment:** pytest only; no live Gmail/LLM.
+
+- **Caveats & footguns:**
+  1. **Symptom:** User expects extraction for a kept newsletter. **Cause:** missing `List-Unsubscribe` in list metadata so candidate is false. **Wrong fix:** widen classifier in this slice. **Right fix:** fix topic/query or headers; or clear cache after fixing metadata.
+  2. **Symptom:** Stale empty row after sender becomes “real” newsletter. **Cause:** empty extraction not cached, then metadata improves—should pick up LLM on next run. **Right fix:** no cache row for skip path; next run calls LLM when candidate true.
+
+- **Procedure:** 1) Branch `elif not digest_source_candidate` before `get_message_html`. 2) Assert `llm_complete` call count in two-row test. 3) Update **Implementation progress** (remove R3b from **Remaining**; add **G** to **Shipped**).
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:** Optional flag to **disable** skip (policy toggle) if operators need body fetch anyway—new slice.
 
 ---
 
