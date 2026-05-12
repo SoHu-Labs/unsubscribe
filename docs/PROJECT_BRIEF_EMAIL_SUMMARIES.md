@@ -11,7 +11,7 @@ Before writing a single new line of code:
 1. This repo was created by merging the former `unsubscribe` project. The Gmail API backend (`src/unsubscribe/gmail_api_backend.py`), Gmail facade (`src/unsubscribe/gmail_facade.py`), progress timer (`src/unsubscribe/timed_run.py`), and JSON persistence (`src/unsubscribe/keep_list.py`) are already in place and **shared** by both unsubscribe and digest features.
 2. Read the existing `src/unsubscribe/` modules and classify each function as: **reusable as-is**, **partially reusable (needs minor adaptation)**, or **unsubscribe-only**.
 3. The existing `src/unsubscribe/classifier.py` has `is_unsubscribable_newsletter()` — the digest engine needs the inverse: `is_digestible()`.
-4. The existing `src/unsubscribe/keep_list.py` (JSON-based persistent set) is used for sender selection: user previews candidates in a dry run, keeps the ones for digest (inverse of unsubscribe where kept = to unsubscribe).
+4. The existing `src/unsubscribe/keep_list.py` persists the **same JSON keep file for both tools** (default path **`~/.unsubscribe_keep.json`** — see `DEFAULT_KEEP_LIST_PATH` in `src/unsubscribe/cli.py`), **no second store**. Digest uses **inverse semantics**: kept senders are digest sources; unsubscribe uses kept senders as “do not prompt / protect” for the unsubscribe walkthrough. User previews candidates in a dry run before committing.
 5. Prefer importing existing `src/unsubscribe/` modules over duplicating code. Do not rewrite working Gmail API code just to match a style guide.
 
 This is the most important instruction in the brief. Skipping it wastes Chaehan's prior work.
@@ -37,7 +37,7 @@ Two initial topics:
 This codebase is **infrastructure**, not a one-off. Two follow-on projects (an invoice handler and a decision questionnaire) will reuse:
 
 - The LLM provider abstraction
-- The IMAP collector
+- The Gmail API collection path (shared backend)
 - The HTML report renderer
 
 Build accordingly. Keep modules narrow, documented, importable.
@@ -59,21 +59,24 @@ Implications for output content and tone:
 
 ## 3. Architecture — Modules
 
+Digest code lives under **`src/email_digest/`** (not a top-level `core/` package). Email collection uses the **existing** `src/unsubscribe/gmail_api_backend.py` — do not add a parallel IMAP collector.
+
 ```
-core/
-  llm.py           # Provider abstraction (DeepSeek / Minimax / LM Studio via litellm)
-  gmail_api.py     # Email collection via Gmail API (ported from billing-glugglejug)
+src/email_digest/
+  llm.py           # Provider abstraction (DeepSeek, Claude, LM Studio via litellm)
+  pipeline.py      # Orchestrator
   embed.py         # Local sentence-transformer embeddings + disk cache
   cluster.py       # Trending detection (HDBSCAN or cosine threshold)
   spark_link.py    # Spark deep-link generator from Message-ID
   render.py        # Jinja2 HTML report renderer
   cache.py         # SQLite-backed cache for extractions and embeddings
+  config.py        # YAML topic loader
 topics/
   ai.yaml
   health_psy.yaml
 templates/
   digest.html.j2
-cli.py             # python -m email_digest run <topic>  |  --all
+src/unsubscribe/cli.py   # add `digest` subcommand: python -m email_digest digest run …
 ```
 
 Each module must be importable standalone (no circular imports, no implicit global state, no module-level network calls).
@@ -88,12 +91,14 @@ Chaehan explicitly wants provider-swappable LLM with local fallback. Default ali
 MODEL_ALIASES = {
     "fast":  "deepseek/deepseek-v4-flash",   # per-email extraction
     "smart": "deepseek/deepseek-v4-pro",     # final synthesis
-    "cheap": "openai/minimax-m2.5",          # bulk extraction fallback (via opencode)
-    "local": "openai/local-model",           # LM Studio (OpenAI-compatible API, localhost:1234)
+    # LM Studio (litellm): map "local" / "local_smart" to env-backed OpenAI-compatible model ids
+    "local":       os.environ["LM_STUDIO_MODEL"],        # default disk preset: Qwen3.5 4B MLX
+    "local_smart": os.environ["LM_STUDIO_MODEL_SMART"], # default disk preset: Qwen3-4B-Instruct
+    # "cheap" / Minimax intentionally omitted — see docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md
 }
 ```
 
-DeepSeek models via DeepSeek API key. Minimax M2.5 via opencode's proxy (use opencode's API key). LM Studio runs locally with an OpenAI-compatible endpoint at `http://localhost:1234/v1`. The provider layer must accept either an alias or a raw model string.
+DeepSeek models via DeepSeek API key. LM Studio runs locally with an OpenAI-compatible endpoint (default `http://localhost:1234/v1`, override with `LM_STUDIO_BASE_URL`). **Default local presets** (weights under `~/.lmstudio/models/`, same layout as **`local-chat`** `src/llm.py` → `MODEL_VARIANTS`): **`local`** → **`mlx-community/Qwen3.5-4B-MLX-4bit`**; **`local_smart`** → **`lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit`**. Set **`LM_STUDIO_MODEL`** / **`LM_STUDIO_MODEL_SMART`** to the exact ids LM Studio’s Local Server lists (they may differ from folder names). The provider layer must accept either an alias or a raw model string.
 
 Implementation options, in order of preference:
 
@@ -126,12 +131,12 @@ senders:
   - "*@thealgorithm.com"
   - "research@*"
   - "specific-newsletter@substack.com"
-folders:                       # optional, IMAP folder filter
+folders:                       # optional Gmail label names (when wired to the API)
   - "INBOX"
   - "AI Newsletters"
 window_days: 7
-extract_model: fast            # alias from MODEL_ALIASES
-synthesize_model: smart
+extract_model: fast            # alias: fast | smart | local (default Qwen3.5 4B via LM_STUDIO_MODEL)
+synthesize_model: smart        # or local_smart (default Qwen3-4B-Instruct via LM_STUDIO_MODEL_SMART)
 persona_prompt: |
   You are summarizing for Chaehan, a working AI founder (Virtual Friend, Delaware
   C-corp) with 4+ years of published AI research. Skip introductory framing.
@@ -181,7 +186,7 @@ Style: minimal, content-dense, dark-mode by default with `prefers-color-scheme` 
 
 ## 8. Spark Deep-Link Generation
 
-Spark supports URL-scheme deep-links of the form (verify current scheme at build time — Readdle has changed this before):
+**Ship** with this scheme (Readdle has changed schemes before — README documents on-device verification; do not block coding on hardware tests):
 
 ```
 readdle-spark://openmessage?messageId=<URL-encoded RFC822 Message-ID, including angle brackets>
@@ -195,7 +200,7 @@ Implementation:
 - In the HTML, render as `<a href="readdle-spark://...">` with the visible text being the email subject.
 - Always include a fallback plain `mailto:` or a sender link in case the scheme doesn't fire (e.g., when the HTML is viewed in a browser on a device without Spark).
 
-If you discover at build time that the scheme has changed (Readdle's docs or by testing), update `core/spark_link.py` and note it in the README.
+If Readdle’s scheme changes (docs or device test), update `src/email_digest/spark_link.py` and the README.
 
 ---
 
@@ -205,11 +210,12 @@ If you discover at build time that the scheme has changed (Readdle's docs or by 
 .
 ├── README.md
 ├── environment.yml             # mamba environment (python=3.12, pip deps)
-├── .env.example                # Gmail API OAuth, DEEPSEEK_API_KEY, LM_STUDIO_BASE_URL
+├── .env.example                # Gmail API OAuth, DEEPSEEK_API_KEY, LM_STUDIO_*
 ├── .gitignore                  # output/, cache/, .env, __pycache__/
 ├── docs/
 │   ├── INVENTORY.md            # Code inventory for digest engine
-│   ├── PLAN.md                 # Implementation plan
+│   ├── IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md  # Implementation plan
+│   ├── LESSONS_LEARNED.md      # Gmail API batching / perf notes
 │   └── PROJECT_BRIEF_EMAIL_SUMMARIES.md  # This brief
 ├── src/
 │   ├── email_digest/           # NEW — digest engine
@@ -239,7 +245,7 @@ If you discover at build time that the scheme has changed (Readdle's docs or by 
 │   ├── test_spark_link.py      # NEW — digest tests
 │   ├── test_cluster.py         # NEW
 │   └── ... (existing unsubscribe tests unchanged)
-└── cli.py                      # MODIFIED: add 'digest' subcommand
+└── src/unsubscribe/cli.py      # MODIFIED: add 'digest' subcommand
 ```
 
 CLI:
@@ -261,8 +267,8 @@ python -m email_digest unsubscribe dry-run
 
 ## 10. Milestones
 
-- **M1 (day 1)** — Repos merged (unsubscribe → email-digest). `docs/INVENTORY.md` and `docs/PLAN.md` updated. Shared backend confirmed. No new code yet. Surface findings to Chaehan.
-- **M2 (day 2)** — LLM abstraction + IMAP collector working end-to-end. `python -m engine run ai --dry-run` dumps JSON of extracted emails for the AI topic.
+- **M1 (day 1)** — Repos merged (unsubscribe → email-digest). `docs/INVENTORY.md` and `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md` updated. Shared backend confirmed. No new code yet. Surface findings to Chaehan.
+- **M2 (day 2)** — LLM abstraction + **Gmail API** collection working end-to-end. `python -m email_digest digest run ai --dry-run` dumps JSON of extracted emails for the AI topic.
 - **M3 (day 3–4)** — Embedding cache + clustering. Trending themes identifiable for a real week of emails.
 - **M4 (day 5–6)** — Synthesis prompt + HTML render. Iterate the persona prompt with Chaehan on a real run.
 - **M5 (day 7)** — Cron/launchd scheduling, README, polish, cost dashboard query.
@@ -274,11 +280,11 @@ Total budget: aim for **under 1500 LOC of new code** (not counting templates and
 ## 11. Quality Bar
 
 - **Caching is mandatory.** Same Message-ID → cached extraction. Same claim string → cached embedding. Re-runs are fast.
-- **Cost logging.** Every LLM call's token usage hits SQLite. `python -m engine cost` prints last 7 days.
+- **Cost logging.** Every LLM call's token usage hits SQLite. `python -m email_digest digest cost` prints last 7 days.
 - **Error tolerance.** One bad email, one network blip, one malformed feed must not crash the pipeline. Log and continue.
 - **No silent drops.** If an email fails to parse, write it to `output/_failures/<date>.log` with the reason.
-- **Tests for pure logic.** `cluster.py`, `spark_link.py`, `cache.py`, prompt-rendering — unit-tested. IMAP and live LLM calls — not in CI; integration tests opt-in via env var.
-- **Type hints everywhere.** `mypy --strict` should pass on `core/`.
+- **Tests for pure logic.** `cluster.py`, `spark_link.py`, `cache.py`, prompt-rendering — unit-tested. Live Gmail API and live LLM calls — not in CI; integration tests opt-in via env var.
+- **Type hints everywhere.** `mypy --strict` should pass on `src/email_digest/`.
 
 ---
 
@@ -308,9 +314,9 @@ Ask: "Is the extraction granularity right? Are the trending clusters meaningful,
 
 ## 14. Open Questions to Resolve at Build Time
 
-1. **Spark URL scheme** — confirm current format by checking Readdle docs or testing on Chaehan's device.
-2. **Email backend** — Use Gmail API, NOT IMAP. The working Gmail API backend already exists in `billing-glugglejug/src/googleads_invoice/gmail_api_backend.py`. Port it to `core/gmail_api.py`. OAuth token file path via `GOOGLE_OAUTH_TOKEN` env var.
-3. **Local LLM availability** — Chaehan uses LM Studio (OpenAI-compatible API, default `http://localhost:1234/v1`), not Ollama. The `local` alias points to LM Studio. Model name configurable via `LM_STUDIO_MODEL` env var.
+1. **Spark URL scheme** — Implement §8 as written; confirm on device when convenient and update `src/email_digest/spark_link.py` + README if Readdle changes the scheme. **Do not block** shipping on hardware verification.
+2. **Email backend** — Use **Gmail API only** (no IMAP). Backend already lives in **`src/unsubscribe/gmail_api_backend.py`** in this repo (merged from unsubscribe); OAuth token path via **`GOOGLE_OAUTH_TOKEN`** env var.
+3. **Local LLM** — LM Studio (OpenAI-compatible API). **Defaults:** **`LM_STUDIO_MODEL`** → Qwen **3.5** **4B** MLX (`mlx-community/Qwen3.5-4B-MLX-4bit` on disk); **`LM_STUDIO_MODEL_SMART`** → Qwen **3** **4B Instruct** (`lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` on disk). Both paths are defined in sibling **`local-chat`** `src/llm.py` (`MODEL_VARIANTS`). Values you put in env vars must still match the **model ids LM Studio’s Local Server** shows (often not identical to folder names).
 4. **Sender allowlists for initial topics** — Chaehan will provide the actual sender list per topic. Ship `ai.yaml` and `health_psy.yaml` with placeholder senders + a TODO comment.
 
 Resolve these before or during M1. Do not block on them — proceed with reasonable defaults and flag in the README.
