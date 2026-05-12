@@ -26,6 +26,24 @@ _EXTRACTION_SYSTEM = (
 _MAX_BODY_CHARS = 12_000
 
 
+def _append_per_message_failure_log(
+    *,
+    output_root: Path,
+    run_day_iso: str,
+    topic: str,
+    message_id: str,
+    exc: BaseException,
+) -> None:
+    """Append one line to ``output/_failures/<run_day_iso>.log`` (project brief: no silent drops)."""
+    failures_dir = output_root / "_failures"
+    failures_dir.mkdir(parents=True, exist_ok=True)
+    log_path = failures_dir / f"{run_day_iso}.log"
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    line = f"{ts}\t{topic}\t{message_id}\t{type(exc).__name__}\t{exc}\n"
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(line)
+
+
 def _extraction_user_message(subject: str, body: str) -> str:
     return (
         "Email subject:\n"
@@ -111,45 +129,56 @@ def run_digest(
 
     out_messages: list[dict[str, Any]] = []
     trending: list[dict[str, Any]] = []
+    output_dir = output_dir or (repo_root() / "output")
+    run_day_iso = datetime.now(UTC).date().isoformat()
     try:
         for m in rows:
             sk = sender_key(m.from_)
             if sk is None or sk not in keep:
                 continue
-            cached = get_extraction_json(conn, cfg.name, m.id)
-            if cached is not None:
-                try:
-                    extraction = json.loads(cached)
-                except json.JSONDecodeError:
-                    extraction = {"parse_error": True, "raw": cached[:2000]}
-            else:
-                html = facade.get_message_html(m.id)
-                plain = strip_html_to_text(html)[:_MAX_BODY_CHARS]
-                user = _extraction_user_message(m.subject, plain)
-                raw = llm_complete(
-                    [
-                        {"role": "system", "content": _EXTRACTION_SYSTEM},
-                        {"role": "user", "content": user},
-                    ],
-                    alias=cfg.extract_model,
-                    json_mode=True,
-                )
-                try:
-                    extraction = json.loads(raw)
-                except json.JSONDecodeError:
-                    extraction = {"parse_error": True, "raw": raw[:2000]}
+            try:
+                cached = get_extraction_json(conn, cfg.name, m.id)
+                if cached is not None:
+                    try:
+                        extraction = json.loads(cached)
+                    except json.JSONDecodeError:
+                        extraction = {"parse_error": True, "raw": cached[:2000]}
                 else:
-                    put_extraction_json(conn, cfg.name, m.id, extraction)
-            out_messages.append(
-                {
-                    "id": m.id,
-                    "rfc_message_id": m.rfc_message_id,
-                    "from": m.from_,
-                    "subject": m.subject,
-                    "date": m.date,
-                    "extraction": extraction,
-                }
-            )
+                    html = facade.get_message_html(m.id)
+                    plain = strip_html_to_text(html)[:_MAX_BODY_CHARS]
+                    user = _extraction_user_message(m.subject, plain)
+                    raw = llm_complete(
+                        [
+                            {"role": "system", "content": _EXTRACTION_SYSTEM},
+                            {"role": "user", "content": user},
+                        ],
+                        alias=cfg.extract_model,
+                        json_mode=True,
+                    )
+                    try:
+                        extraction = json.loads(raw)
+                    except json.JSONDecodeError:
+                        extraction = {"parse_error": True, "raw": raw[:2000]}
+                    else:
+                        put_extraction_json(conn, cfg.name, m.id, extraction)
+                out_messages.append(
+                    {
+                        "id": m.id,
+                        "rfc_message_id": m.rfc_message_id,
+                        "from": m.from_,
+                        "subject": m.subject,
+                        "date": m.date,
+                        "extraction": extraction,
+                    }
+                )
+            except Exception as exc:
+                _append_per_message_failure_log(
+                    output_root=output_dir,
+                    run_day_iso=run_day_iso,
+                    topic=cfg.name,
+                    message_id=m.id,
+                    exc=exc,
+                )
         trending = _compute_trending(cfg, out_messages, conn)
     finally:
         conn.close()
@@ -168,20 +197,18 @@ def run_digest(
 
     synth = synthesize_digest(cfg, base)
     td = template_dir or (repo_root() / "templates")
-    od = output_dir or (repo_root() / "output")
-    od.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     html = render_digest_html(
         cfg=cfg,
         synthesis=synth,
         messages=out_messages,
         template_dir=td,
     )
-    day = datetime.now(UTC).date().isoformat()
-    path = od / f"{cfg.name}_{day}.html"
+    path = output_dir / f"{cfg.name}_{run_day_iso}.html"
     path.write_text(html, encoding="utf-8")
     emailed_to: str | None = None
     if cfg.also_email_to:
-        emailed_to = maybe_email_digest(cfg, html, date_iso=day, facade=facade)
+        emailed_to = maybe_email_digest(cfg, html, date_iso=run_day_iso, facade=facade)
     return {
         **base,
         "synthesis": synth,
@@ -198,6 +225,7 @@ def run_digest_dry_run(
     max_results: int = 50,
     since: date | None = None,
     cache_db: Path | None = None,
+    output_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Collect + extract + trending; JSON-shaped result (no synthesis / no HTML file)."""
     return run_digest(
@@ -208,4 +236,5 @@ def run_digest_dry_run(
         since=since,
         cache_db=cache_db,
         dry_run=True,
+        output_dir=output_dir,
     )

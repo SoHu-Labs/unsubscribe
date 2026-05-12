@@ -152,6 +152,51 @@ def test_trending_clusters_with_stubbed_embed_and_cluster(tmp_path: Path) -> Non
     assert {len(b["claims"]) for b in out["trending"]} == {2}
 
 
+def test_per_message_failure_logged_and_run_continues(tmp_path: Path) -> None:
+    """One bad Gmail fetch must not abort the pipeline; failure is appended to _failures log."""
+    cfg = load_topic_config(_TOPICS / "ai.yaml")
+    keep = tmp_path / "keep.json"
+    keep.write_text(
+        json.dumps({"digest@news.com": {"subject": "Hi", "date_kept": "2026-01-01"}}),
+        encoding="utf-8",
+    )
+    out_root = tmp_path / "digest_out"
+    facade = MagicMock()
+    facade.list_messages.return_value = [
+        _summary("1", "Digest <digest@news.com>", "OK"),
+        _summary("2", "Digest <digest@news.com>", "Bad"),
+    ]
+
+    def _html(mid: str) -> str:
+        if mid == "2":
+            raise RuntimeError("simulated fetch failure")
+        return "<html><body>ok</body></html>"
+
+    facade.get_message_html.side_effect = _html
+    fake_extract = '{"key_claims":["c1"],"entities":[],"numbers":[]}'
+
+    with patch("email_digest.pipeline.llm_complete", return_value=fake_extract):
+        out = run_digest_dry_run(
+            cfg,
+            facade=facade,
+            keep_list_path=keep,
+            max_results=50,
+            cache_db=tmp_path / "fail.sqlite",
+            output_dir=out_root,
+        )
+
+    assert len(out["messages"]) == 1
+    assert out["messages"][0]["id"] == "1"
+    fail_dir = out_root / "_failures"
+    assert fail_dir.is_dir()
+    logs = list(fail_dir.glob("*.log"))
+    assert len(logs) == 1
+    log_text = logs[0].read_text(encoding="utf-8")
+    assert "2" in log_text
+    assert "RuntimeError" in log_text
+    assert "simulated fetch failure" in log_text
+
+
 def test_full_digest_writes_html(tmp_path: Path) -> None:
     cfg = load_topic_config(_TOPICS / "ai.yaml")
     keep = tmp_path / "keep.json"
