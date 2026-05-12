@@ -6,7 +6,7 @@ The `unsubscribe` project was renamed to `email-digest`. The existing Gmail API 
 
 ## Implementation progress (canonical status — read this first)
 
-**Last updated:** 2026-05-12 — bump this date whenever you change **Remaining scope** or merge a user-visible slice.
+**Last updated:** 2026-05-13 — bump this date whenever you change **Remaining scope** or ship a user-visible slice.
 
 This section is the **continuity contract** for any implementer (human or LLM): status here overrides informal chat. Named slices below hold acceptance tests and invariants; this section holds **what is done vs what is still in scope**.
 
@@ -26,16 +26,18 @@ This section is the **continuity contract** for any implementer (human or LLM): 
 
 ### Remaining scope (prioritized)
 
-| ID | Item | Type | Status | Next step when resuming |
-|----|------|------|--------|---------------------------|
-| R1 | **Keep-list mutations from digest CLI** (`digest keep add|remove`, batch from JSON, or TUI) | product / CLI | **Not shipped** | New slice (§7): goal = persist to `~/.unsubscribe_keep.json` only; tests with `tmp_path`; no duplicate store |
-| R2 | **`digest candidates --all`** (every topic, one OAuth, ordered output) | CLI | **Not shipped** | New slice: mirror `digest run --all` ordering + Gmail deferral rules |
-| R3 | **`run_digest` uses `digest_source_candidate`** (filter, warn-only log, or rank) | pipeline | **Not shipped** | New slice: explicit user-visible behavior + tests; today pipeline only uses keep-list + query |
-| R4 | **Digest “walkthrough” UX** (M2 §4 style: step through rows like unsubscribe flow) | product | **Not shipped** | Large slice or app; `digest candidates` JSON is the current substitute |
-| R5 | **Spark scheme on-device check** | manual | **Open (F2)** | User verifies `readdle-spark://…` on hardware; code change only if Readdle contract differs |
-| R6 | **Real sender addresses in `topics/*.yaml`** | content | **Open** | Replace TODO senders; optional CI: fail if `TODO-` in senders |
-| R7 | **Minimax / `cheap` alias** | LLM | **Deferred** | Plan RESOLVED: skipped until endpoint known |
-| R8 | **Formal §7 slice blocks for legacy M2–M4 headings** | docs | **Optional** | Retrofit only if reopening those milestones for regression work |
+**Order for implementers:** rows are sorted by **approximate implementation effort** (smallest first) for **code/product** work (**Pick** 1–4), then **operator / manual / deferred** (**Pick** 5–7). **Pick 8 (R8)** is **always last**: formal docs must **follow** shipped behavior—skip under tight LLM budget.
+
+| Pick | ID | Item | Type | Status | Next step when resuming |
+|------|----|------|------|--------|---------------------------|
+| 1 | R3 | **`run_digest` uses `digest_source_candidate`** (filter, warn-only log, or rank) | pipeline | **Not shipped** | New slice: explicit user-visible behavior + tests; today pipeline only uses keep-list + query |
+| 2 | R2 | **`digest candidates --all`** (every topic, one OAuth, ordered output) | CLI | **Not shipped** | New slice: mirror `digest run --all` ordering + Gmail deferral rules |
+| 3 | R1 | **Keep-list mutations from digest CLI** (`digest keep add|remove`, batch from JSON, or TUI) | product / CLI | **Not shipped** | New slice (§7): goal = persist to `~/.unsubscribe_keep.json` only; tests with `tmp_path`; no duplicate store |
+| 4 | R4 | **Digest “walkthrough” UX** (M2 §4 style: step through rows like unsubscribe flow) | product | **Not shipped** | Large slice or app; `digest candidates` JSON is the current substitute |
+| 5 | R6 | **Real sender addresses in `topics/*.yaml`** | content | **Open** | Replace TODO senders; optional CI: fail if `TODO-` in senders (often **human** edits, minimal LLM) |
+| 6 | R5 | **Spark scheme on-device check** | manual | **Open (F2)** | User verifies `readdle-spark://…` on hardware; code change only if Readdle contract differs (**no LLM** unless bug found) |
+| 7 | R7 | **Minimax / `cheap` alias** | LLM | **Deferred** | Plan RESOLVED: skipped until endpoint known |
+| 8 | R8 | **Formal §7 slice blocks for legacy M2–M4 headings** | docs | **Optional** | **After** code is stable; retrofit only if reopening those milestones—**defer if budget is tight** |
 
 ### Out of scope (unless plan is amended)
 
