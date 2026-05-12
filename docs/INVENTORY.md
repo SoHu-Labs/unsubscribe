@@ -25,7 +25,7 @@ This repo was created by merging the former `unsubscribe` project. Gmail API + f
 | Module | Path | Dependencies |
 |---|---|---|
 | LLM provider | `src/email_digest/llm.py` | litellm |
-| Digest pipeline | `src/email_digest/pipeline.py` | Gmail API, LLM |
+| Digest pipeline | `src/email_digest/pipeline.py` | Gmail API, LLM; per-message fetch/extract errors append to `output/_failures/<YYYY-MM-DD>.log`, run continues |
 | Embeddings | `src/email_digest/embed.py` | sentence-transformers |
 | Clustering | `src/email_digest/cluster.py` | hdbscan |
 | Spark deeplinks | `src/email_digest/spark_link.py` | stdlib only |

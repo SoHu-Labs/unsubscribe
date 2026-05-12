@@ -167,7 +167,8 @@ Send the rendered HTML with `users.messages.send` using the same OAuth token as 
 - **`digest topics`** — list / validate `topics/*.yaml` (tab-separated or `--json`); **`--strict`** requires YAML ``name`` to match the file stem (CI), exit **1** on mismatch.
 - **`digest run … --strict`** — same stem rule for **`digest run <topic>`** and **`digest run --all`**; JSON error + exit **1** on mismatch; single-topic mismatch does not initialize Gmail.
 - **`digest run --all`** — runs every topic; JSON array mixes normal pipeline objects with `{ "topic", "file", "error" }` on failure; **exit 1** if any topic failed (cron-friendly).
-- **Cron** — typical pattern: `cd <repo> && mamba run -n email-digest python -m email_digest digest run ai` on a schedule; ensure `GOOGLE_OAUTH_TOKEN` (and LLM keys) are available in that environment.
+- **Per-message failures** — during collect/extract, one bad message does not abort the topic run; errors append to **`output/_failures/<YYYY-MM-DD>.log`** (tab-separated). Same tree when using **`--output-dir`**. See README CLI section.
+- **Cron** — typical pattern: `cd <repo> && mamba run -n email-digest python -m email_digest digest run ai` on a schedule; ensure `GOOGLE_OAUTH_TOKEN` (and LLM keys) are available in that environment. Copy **`scripts/digest-cron.example.sh`** as a starting wrapper (`DIGEST_REPO`, `GOOGLE_OAUTH_TOKEN`, optional `UNSUBSCRIBE_KEEP` / `DIGEST_CACHE_DB`).
 
 ---
 

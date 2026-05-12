@@ -50,6 +50,8 @@ python -m email_digest digest cost --days 14 --cache-db /path/to/custom.sqlite
 python -m email_digest digest cost --json
 ```
 
+Cron / launchd: start from **`scripts/digest-cron.example.sh`** (set `GOOGLE_OAUTH_TOKEN`, optional `DIGEST_REPO` / `UNSUBSCRIBE_KEEP` / `DIGEST_CACHE_DB`).
+
 `--dry-run`: JSON only (collect + extract + `trending`). **Without** `--dry-run`: adds LLM synthesis + self-contained HTML at `output/<topic>_<YYYY-MM-DD>.html` (and `synthesis` / `output_html` / optional `emailed_to` keys in the printed JSON). Per-message Gmail fetch or extraction errors are appended to **`output/_failures/<YYYY-MM-DD>.log`** (tab-separated lines); the run continues with the remaining messages. Use `--output-dir` / `--template-dir` to override defaults (failure logs live under the chosen output directory’s `_failures/`). Gmail OAuth is **not** loaded when the invocation is invalid (missing topic / `run` without `topic` or `--all`, or malformed `--since`). **`digest run --strict`** (single topic or **`--all`**) enforces the same YAML ``name`` == file stem rule as **`digest topics --strict`**; on mismatch, JSON `{ "topic", "file", "error" }` and exit **1**, and **single-topic** mismatches skip Gmail init. **`digest run <topic>`** on failure prints JSON `{ "topic", "file", "error" }` and exits **1** (missing/invalid YAML or pipeline exception). Bad **`--since`** shape exits **2** with a stderr message. **`digest run --all`**: prints a JSON array; if any topic fails (bad YAML, **`--strict`** stem mismatch, or pipeline error), that element is `{ "topic", "file", "error" }` and the process exits **1**; all success exits **0**.
 
 ## Docs
