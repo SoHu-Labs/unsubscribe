@@ -169,6 +169,7 @@ Send the rendered HTML with `users.messages.send` using the same OAuth token as 
 | M2–M4 (digest engine, cache, synthesis, HTML) | **Shipped** in repo | Older plan sections are narrative; no separate contract blocks retrofitted unless we reopen a milestone. |
 | M5 (cron, CLI polish, cost dashboard) | **Shipped** — see **Slice: M5** below | Acceptance is the contract of record. |
 | **Slices C → D → B → A** (LM Studio runbook, Spark contract tests, digest classification, `digest candidates`) | **Shipped** — sections below **Post-M5** | Smallest-scope-first order; closes most of F1/F3 documentation path; F2 remains manual. |
+| **Slice E** (`digest candidates` keep-list preview fields) | **Shipped** — section below slice A | Extends candidates JSON; no keep mutations. |
 | **STILL OPEN** (below) | Product / env verification | Not blocking; F2 device check; interactive keep-list editing still manual outside CLI. |
 
 ---
@@ -290,7 +291,7 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 
 - **Goal:** For a topic YAML, list Gmail messages matching the digest query and emit **JSON** with per-row `digest_source_candidate` (from slice B) plus headers needed to decide keep-list updates, without running extraction/LLM.
 - **Non-goals:** Interactive TUI; mutating keep list from this command; `--all` topics in one invocation (defer); synthesis/HTML.
-- **Invariants:** Exit codes align with `digest run` where applicable: missing topic file / config error → **1** with stderr or JSON error shape per CLI style; invalid `--since` → **2**; success → **0** + stdout JSON array. Gmail loads only after config parse succeeds (same spirit as single-topic `run`). JSON keys stable: at least `id`, `from`, `subject`, `date`, `rfc_message_id`, `digest_source_candidate`.
+- **Invariants:** Exit codes align with `digest run` where applicable: missing topic file / config error → **1** with stderr or JSON error shape per CLI style; invalid `--since` → **2**; success → **0** + stdout JSON array. Gmail loads only after config parse succeeds (same spirit as single-topic `run`). JSON keys stable: at least `id`, `from`, `subject`, `date`, `rfc_message_id`, `digest_source_candidate` (**slice E** adds `sender_key`, `keep_list_kept`, and **`--keep-list`**).
 - **Coupling:** `src/email_digest/cli.py`, `tests/test_digest_cli.py`, `README.md` (CLI one-liner), `docs/INVENTORY.md` (CLI table row optional).
 - **Preconditions:** Slice B merged (import `is_digest_source_candidate`); `headers_from_summary` from `gmail_facade`.
 - **Permissions & environment:** Tests mock `GmailApiBackend.from_env` / `GmailFacade`; no live Gmail in CI.
@@ -302,6 +303,23 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 - **Procedure:** 1) Add `digest candidates <topic>` argparse + `_digest_candidates`. 2) build query via `build_digest_gmail_query`; `facade.list_messages`. 3) Emit JSON array. 4) Tests with mocks. 5) README example.
 - **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
 - **Follow-ups:** Interactive keep-list merge (F3 remainder); `digest candidates --all` (optional).
+
+### Slice: E — `digest candidates` keep-list preview fields
+
+- **Goal:** Each `digest candidates` JSON row shows whether the message’s **From** address is already in the shared keep file (same semantics as `run_digest` ingestion) plus a normalized **`sender_key`** for scripting, without mutating the keep file from this command.
+- **Non-goals:** CLI flags to add/remove keep entries; changing `run_digest` filtering; avoiding `load_keep_list`’s “create empty JSON if missing” behavior (must match pipeline).
+- **Invariants:** Exit codes unchanged from slice A. Every successful candidates row includes **`sender_key`** (`string` or JSON **`null`** when `From` cannot be parsed) and **`keep_list_kept`** (`bool`, same as `is_kept(keep_list, from_)`). **`--keep-list`** defaults to the same path as **`digest run`** (`~/.unsubscribe_keep.json`).
+- **Coupling:** `src/email_digest/cli.py`, `tests/test_digest_cli.py`, `README.md`, `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md`.
+- **Preconditions:** Slice A merged.
+- **Permissions & environment:** Same as slice A (mocked Gmail in CI).
+
+- **Caveats & footguns:**
+  1. **Symptom:** `keep_list_kept` always false. **Cause:** wrong `--keep-list` path vs the file used for `digest run`. **Wrong fix:** guess home path. **Right fix:** pass explicit `--keep-list` or document default parity with `digest run`.
+  2. **Symptom:** `sender_key` null for valid mail. **Cause:** malformed `From` not parseable by `parseaddr`. **Wrong fix:** substring hacks. **Right fix:** treat as null and false for keep (matches `sender_key` / `is_kept` contract).
+
+- **Procedure:** 1) Add `--keep-list` to `digest candidates` (default = `DEFAULT_KEEP_LIST_PATH`). 2) After topic config + strict checks, `keep = load_keep_list(path)`; each row adds `sender_key` and `keep_list_kept`. 3) Tests with two mocked rows and a temp keep file. 4) README one-line note.
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:** Optional `digest keep add …` slice (mutating).
 
 ---
 

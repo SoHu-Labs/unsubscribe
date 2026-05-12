@@ -15,6 +15,7 @@ import yaml
 from unsubscribe.gmail_api_backend import GmailApiBackend
 from unsubscribe.gmail_facade import GmailFacade, headers_from_summary
 from unsubscribe.classifier import is_digest_source_candidate
+from unsubscribe.keep_list import is_kept, load_keep_list, sender_key
 
 from email_digest.cache import cost_report_payload, format_cost_report
 from email_digest.config import load_topic_config
@@ -288,6 +289,7 @@ def _digest_candidates(ns: argparse.Namespace) -> int:
         )
         return 1
 
+    keep = load_keep_list(ns.keep_list)
     backend = GmailApiBackend.from_env()
     facade = GmailFacade(backend)
     query = build_digest_gmail_query(
@@ -300,6 +302,7 @@ def _digest_candidates(ns: argparse.Namespace) -> int:
     rows_out: list[dict[str, Any]] = []
     for m in rows:
         h = headers_from_summary(m)
+        sk = sender_key(m.from_)
         rows_out.append(
             {
                 "id": m.id,
@@ -308,6 +311,8 @@ def _digest_candidates(ns: argparse.Namespace) -> int:
                 "date": m.date,
                 "rfc_message_id": m.rfc_message_id,
                 "digest_source_candidate": is_digest_source_candidate(h),
+                "sender_key": sk,
+                "keep_list_kept": is_kept(keep, m.from_),
             }
         )
     print(json.dumps(rows_out, indent=2))
@@ -454,6 +459,12 @@ def _main_digest(argv: list[str]) -> int:
         type=int,
         default=50,
         help="Cap for Gmail ``messages.list`` (default 50)",
+    )
+    cand_p.add_argument(
+        "--keep-list",
+        type=Path,
+        default=DEFAULT_KEEP_LIST_PATH,
+        help=f"Keep-list JSON (default: {DEFAULT_KEEP_LIST_PATH})",
     )
 
     ns = p.parse_args(argv)

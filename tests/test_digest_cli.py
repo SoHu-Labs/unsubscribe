@@ -934,6 +934,8 @@ def test_digest_candidates_json_lists_rows(
     td = tmp_path / "tcand_ok"
     td.mkdir()
     (td / "solo.yaml").write_text(_minimal_topic_yaml(name="solo"), encoding="utf-8")
+    keep = tmp_path / "keep.json"
+    keep.write_text("{}", encoding="utf-8")
 
     unsub = "<https://vendor.example/unsub>"
     s = GmailHeaderSummary(
@@ -955,7 +957,17 @@ def test_digest_candidates_json_lists_rows(
         patch("email_digest.cli.GmailApiBackend.from_env", return_value=MagicMock()),
         patch("email_digest.cli.GmailFacade", return_value=facade),
     ):
-        rc = main(["digest", "candidates", "solo", "--topics-dir", str(td)])
+        rc = main(
+            [
+                "digest",
+                "candidates",
+                "solo",
+                "--topics-dir",
+                str(td),
+                "--keep-list",
+                str(keep),
+            ]
+        )
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert len(data) == 1
@@ -963,4 +975,78 @@ def test_digest_candidates_json_lists_rows(
     assert row["id"] == "m1"
     assert row["digest_source_candidate"] is True
     assert row["rfc_message_id"] == "<weekly@example.com>"
+    assert row["sender_key"] == "news@example.com"
+    assert row["keep_list_kept"] is False
     facade.list_messages.assert_called_once()
+
+
+def test_digest_candidates_keep_list_kept_true_when_sender_in_keep(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+    from unsubscribe.gmail_facade import GmailHeaderSummary
+
+    td = tmp_path / "tcand_keep"
+    td.mkdir()
+    (td / "solo.yaml").write_text(_minimal_topic_yaml(name="solo"), encoding="utf-8")
+    keep = tmp_path / "keep2.json"
+    keep.write_text(
+        json.dumps(
+            {
+                "news@example.com": {"subject": "x", "date_kept": "2026-01-01"},
+                "other@y.com": {"subject": "y", "date_kept": "2026-01-02"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    unsub = "<https://vendor.example/unsub>"
+    in_keep = GmailHeaderSummary(
+        id="a",
+        thread_id="t",
+        from_="News <news@example.com>",
+        subject="A",
+        date="Mon, 1 Jan 2024 00:00:00 +0000",
+        snippet="s",
+        list_unsubscribe=unsub,
+        list_unsubscribe_post=None,
+        delivered_to=None,
+        rfc_message_id="<a@x.com>",
+    )
+    not_in_keep = GmailHeaderSummary(
+        id="b",
+        thread_id="t",
+        from_="Zed <zed@z.com>",
+        subject="B",
+        date="Tue, 2 Jan 2024 00:00:00 +0000",
+        snippet="s",
+        list_unsubscribe=unsub,
+        list_unsubscribe_post=None,
+        delivered_to=None,
+        rfc_message_id="<b@x.com>",
+    )
+    facade = MagicMock()
+    facade.list_messages.return_value = [in_keep, not_in_keep]
+
+    with (
+        patch("email_digest.cli.GmailApiBackend.from_env", return_value=MagicMock()),
+        patch("email_digest.cli.GmailFacade", return_value=facade),
+    ):
+        rc = main(
+            [
+                "digest",
+                "candidates",
+                "solo",
+                "--topics-dir",
+                str(td),
+                "--keep-list",
+                str(keep),
+            ]
+        )
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data) == 2
+    assert data[0]["sender_key"] == "news@example.com"
+    assert data[0]["keep_list_kept"] is True
+    assert data[1]["sender_key"] == "zed@z.com"
+    assert data[1]["keep_list_kept"] is False
