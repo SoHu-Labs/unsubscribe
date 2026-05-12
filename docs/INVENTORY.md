@@ -21,7 +21,7 @@ Entry points: `python -m email_digest` (`__main__` → `cli.main`), console scri
 | File | Purpose |
 |---|---|
 | `cli.py` | `digest` subcommands: `version`, `cost` (human + `--json`), `topics` (`--json`, `--strict`), `candidates` (Gmail list + `digest_source_candidate` + `sender_key` / `keep_list_kept`, no LLM), `run` (`--all`, `--strict`, `--dry-run`, …); passes through `unsubscribe` argv to `unsubscribe.cli` |
-| `pipeline.py` | Orchestrates query → list → keep-list filter → extract (LLM) → cache → trending (embed + cluster) → optional synthesis + HTML + `maybe_email_digest` |
+| `pipeline.py` | Orchestrates query → list → keep-list filter → extract (LLM) → cache → trending (embed + cluster) → optional synthesis + HTML + `maybe_email_digest`; each **`messages[]`** item includes **`digest_source_candidate`** (slice F) |
 | `gmail_query.py` | Builds Gmail `q` strings from topic YAML (`window_days`, senders, folders, `since`) |
 | `config.py` | `TopicConfig` + `load_topic_config` from `topics/<stem>.yaml` |
 | `llm.py` | litellm `complete`, aliases, `resolve_model_alias` (operator diagnostics), optional LLM call logging into SQLite |

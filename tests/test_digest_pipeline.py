@@ -22,6 +22,8 @@ def _summary(
     subject: str,
     *,
     rfc_message_id: str | None = None,
+    list_unsubscribe: str | None = None,
+    list_unsubscribe_post: str | None = None,
 ) -> GmailHeaderSummary:
     return GmailHeaderSummary(
         id=mid,
@@ -30,8 +32,8 @@ def _summary(
         subject=subject,
         date="Mon, 1 Jan 2024 00:00:00 +0000",
         snippet="sn",
-        list_unsubscribe=None,
-        list_unsubscribe_post=None,
+        list_unsubscribe=list_unsubscribe,
+        list_unsubscribe_post=list_unsubscribe_post,
         delivered_to=None,
         rfc_message_id=rfc_message_id,
     )
@@ -54,7 +56,12 @@ def test_dry_run_filters_by_keep_list(tmp_path: Path) -> None:
 
     facade = MagicMock()
     facade.list_messages.return_value = [
-        _summary("1", "Digest <digest@news.com>", "A"),
+        _summary(
+            "1",
+            "Digest <digest@news.com>",
+            "A",
+            list_unsubscribe="<https://vendor.example/unsub>",
+        ),
         _summary("2", "Other <other@x.com>", "B"),
     ]
     facade.get_message_html.return_value = "<html><body>Hi</body></html>"
@@ -73,9 +80,52 @@ def test_dry_run_filters_by_keep_list(tmp_path: Path) -> None:
     assert out["topic"] == "ai"
     assert len(out["messages"]) == 1
     assert out["messages"][0]["id"] == "1"
+    assert out["messages"][0]["digest_source_candidate"] is True
     assert out["messages"][0]["extraction"] == json.loads(fake_extract)
     assert out["trending"] == []
     facade.list_messages.assert_called_once()
+
+
+def test_digest_messages_carry_digest_source_candidate(
+    tmp_path: Path,
+) -> None:
+    """Slice F / R3: same classifier signal as ``digest candidates``, on each pipeline message."""
+    cfg = load_topic_config(_TOPICS / "ai.yaml")
+    keep = tmp_path / "keep.json"
+    keep.write_text(
+        json.dumps(
+            {
+                "digest@news.com": {"subject": "Hi", "date_kept": "2026-01-01"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    unsub = "<https://vendor.example/unsub>"
+    facade = MagicMock()
+    facade.list_messages.return_value = [
+        _summary(
+            "1",
+            "Digest <digest@news.com>",
+            "Weekly",
+            list_unsubscribe=unsub,
+        ),
+        _summary("2", "Digest <digest@news.com>", "Personal note"),
+    ]
+    facade.get_message_html.return_value = "<html><body>x</body></html>"
+    fake_extract = '{"key_claims":["c"],"entities":[],"numbers":[]}'
+
+    with patch("email_digest.pipeline.llm_complete", return_value=fake_extract):
+        out = run_digest_dry_run(
+            cfg,
+            facade=facade,
+            keep_list_path=keep,
+            max_results=50,
+            cache_db=tmp_path / "cand.sqlite",
+        )
+
+    assert len(out["messages"]) == 2
+    assert out["messages"][0]["digest_source_candidate"] is True
+    assert out["messages"][1]["digest_source_candidate"] is False
 
 
 def test_extraction_cache_skips_html_and_llm(tmp_path: Path) -> None:
@@ -96,7 +146,12 @@ def test_extraction_cache_skips_html_and_llm(tmp_path: Path) -> None:
 
     facade = MagicMock()
     facade.list_messages.return_value = [
-        _summary("1", "Digest <digest@news.com>", "A"),
+        _summary(
+            "1",
+            "Digest <digest@news.com>",
+            "A",
+            list_unsubscribe="<https://vendor.example/unsub>",
+        ),
     ]
 
     with patch("email_digest.pipeline.llm_complete") as llm_m:
@@ -109,6 +164,7 @@ def test_extraction_cache_skips_html_and_llm(tmp_path: Path) -> None:
     llm_m.assert_not_called()
     facade.get_message_html.assert_not_called()
     assert out["messages"][0]["extraction"]["key_claims"] == ["cached"]
+    assert out["messages"][0]["digest_source_candidate"] is True
     assert out["trending"] == []
 
 
@@ -121,7 +177,12 @@ def test_trending_clusters_with_stubbed_embed_and_cluster(tmp_path: Path) -> Non
     )
     facade = MagicMock()
     facade.list_messages.return_value = [
-        _summary("1", "Digest <digest@news.com>", "A"),
+        _summary(
+            "1",
+            "Digest <digest@news.com>",
+            "A",
+            list_unsubscribe="<https://vendor.example/unsub>",
+        ),
     ]
     facade.get_message_html.return_value = "<p>x</p>"
     fake_extract = json.dumps(
@@ -163,8 +224,18 @@ def test_per_message_failure_logged_and_run_continues(tmp_path: Path) -> None:
     out_root = tmp_path / "digest_out"
     facade = MagicMock()
     facade.list_messages.return_value = [
-        _summary("1", "Digest <digest@news.com>", "OK"),
-        _summary("2", "Digest <digest@news.com>", "Bad"),
+        _summary(
+            "1",
+            "Digest <digest@news.com>",
+            "OK",
+            list_unsubscribe="<https://vendor.example/unsub>",
+        ),
+        _summary(
+            "2",
+            "Digest <digest@news.com>",
+            "Bad",
+            list_unsubscribe="<https://vendor.example/unsub>",
+        ),
     ]
 
     def _html(mid: str) -> str:
@@ -218,6 +289,7 @@ def test_full_digest_writes_html(tmp_path: Path) -> None:
             "Digest <digest@news.com>",
             "Subj",
             rfc_message_id="<abc@mail.gmail.com>",
+            list_unsubscribe="<https://vendor.example/unsub>",
         ),
     ]
     facade.get_message_html.return_value = "<html><body>text</body></html>"

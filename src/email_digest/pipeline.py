@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from unsubscribe.gmail_api_backend import strip_html_to_text
-from unsubscribe.gmail_facade import GmailFacade
+from unsubscribe.gmail_facade import GmailFacade, headers_from_summary
+from unsubscribe.classifier import is_digest_source_candidate
 from unsubscribe.keep_list import load_keep_list, sender_key
 
 from email_digest.cache import connect, get_extraction_json, put_extraction_json
@@ -161,6 +162,7 @@ def run_digest(
                         extraction = {"parse_error": True, "raw": raw[:2000]}
                     else:
                         put_extraction_json(conn, cfg.name, m.id, extraction)
+                h = headers_from_summary(m)
                 out_messages.append(
                     {
                         "id": m.id,
@@ -169,6 +171,7 @@ def run_digest(
                         "subject": m.subject,
                         "date": m.date,
                         "extraction": extraction,
+                        "digest_source_candidate": is_digest_source_candidate(h),
                     }
                 )
             except Exception as exc:

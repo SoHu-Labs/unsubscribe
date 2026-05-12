@@ -21,6 +21,7 @@ This section is the **continuity contract** for any implementer (human or LLM): 
 | **B** | `is_digest_source_candidate()` → delegates to `is_unsubscribable_newsletter` |
 | **A** | `digest candidates <topic>` — Gmail list + JSON, no LLM |
 | **E** | `digest candidates` adds `sender_key`, `keep_list_kept`, `--keep-list` (parity with `digest run` gate) |
+| **F** | Each `run_digest` / dry-run **`messages[]`** item includes **`digest_source_candidate`** (same classifier as slice B / `digest candidates`; **no filtering** yet) |
 
 **Acceptance command for “repo still healthy”:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
 
@@ -30,7 +31,7 @@ This section is the **continuity contract** for any implementer (human or LLM): 
 
 | Pick | ID | Item | Type | Status | Next step when resuming |
 |------|----|------|------|--------|---------------------------|
-| 1 | R3 | **`run_digest` uses `digest_source_candidate`** (filter, warn-only log, or rank) | pipeline | **Not shipped** | New slice: explicit user-visible behavior + tests; today pipeline only uses keep-list + query |
+| 1 | R3b | **Optional:** skip or down-rank LLM / trending work when `digest_source_candidate` is false | pipeline | **Not shipped** | New slice: user-visible policy + tests (**Slice F** only annotates today) |
 | 2 | R2 | **`digest candidates --all`** (every topic, one OAuth, ordered output) | CLI | **Not shipped** | New slice: mirror `digest run --all` ordering + Gmail deferral rules |
 | 3 | R1 | **Keep-list mutations from digest CLI** (`digest keep add|remove`, batch from JSON, or TUI) | product / CLI | **Not shipped** | New slice (§7): goal = persist to `~/.unsubscribe_keep.json` only; tests with `tmp_path`; no duplicate store |
 | 4 | R4 | **Digest “walkthrough” UX** (M2 §4 style: step through rows like unsubscribe flow) | product | **Not shipped** | Large slice or app; `digest candidates` JSON is the current substitute |
@@ -334,7 +335,7 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 
 - **Procedure:** 1) Add `is_digest_source_candidate(...) -> bool` delegating to `is_unsubscribable_newsletter`. 2) Tests: equality to newsletter helper on representative headers; body-link flag parity.
 - **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
-- **Follow-ups:** Pipeline may later filter or rank by this flag (separate slice if behavior-visible).
+- **Follow-ups:** ~~Pipeline may later filter or rank by this flag~~ → **Slice F** annotates pipeline messages; **R3b** tracks optional filter/down-rank.
 
 ### Slice: A — `digest candidates` CLI (topic-scoped list + classification JSON)
 
@@ -370,6 +371,23 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 - **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
 - **Follow-ups:** Optional `digest keep add …` slice (mutating).
 
+### Slice: F — Pipeline messages carry `digest_source_candidate`
+
+- **Goal:** Every message object in `run_digest` / `run_digest_dry_run` output includes **`digest_source_candidate`** (same boolean as `digest candidates` / slice B) so JSON consumers can rank or filter without a second Gmail list call. **No** change to keep-list gating, query construction, or extraction **policy** in this slice (annotation only).
+- **Non-goals:** Skipping LLM extraction, dropping rows from `messages`, or changing trending inputs; mutating keep list.
+- **Invariants:** `messages[i]` always includes **`digest_source_candidate`** (`bool`) once the message is appended (success path). Classifier uses **`headers_from_summary`** only (no body prefetch). Existing keys on each message unchanged.
+- **Coupling:** `src/email_digest/pipeline.py`, `tests/test_digest_pipeline.py`, `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md` (this slice + **Implementation progress**).
+- **Preconditions:** Slice B merged.
+- **Permissions & environment:** pytest only; mocked Gmail / LLM as today.
+
+- **Caveats & footguns:**
+  1. **Symptom:** Flag disagrees with `digest candidates` for same id. **Cause:** different header fields available in `GmailHeaderSummary` vs list response. **Wrong fix:** duplicate classifier logic. **Right fix:** same `headers_from_summary` + `is_digest_source_candidate` path as CLI.
+  2. **Symptom:** Trending changes when annotation added. **Cause:** accidentally filtering `out_messages` in the same change. **Wrong fix:** ship silent behavior change. **Right fix:** this slice is metadata-only; **R3b** owns filter/down-rank.
+
+- **Procedure:** 1) After extraction resolved for a kept row, `h = headers_from_summary(m)`; append `digest_source_candidate=is_digest_source_candidate(h)`. 2) Tests: two rows same keep key, one with List-Unsubscribe → true/false split. 3) Update **Implementation progress** (Shipped + **R3** → **R3b** in Remaining).
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:** **R3b** — optional skip/down-rank when `digest_source_candidate` is false.
+
 ---
 
 ## RESOLVED QUESTIONS
@@ -386,4 +404,4 @@ Cross-check with **Implementation progress → Remaining scope** (canonical). Bu
 
 - **`LM_STUDIO_MODEL`** / **`LM_STUDIO_MODEL_SMART`** — operator must match LM Studio Local Server strings; see `docs/LM_STUDIO_DIGEST.md` (Slice C).
 - **Spark URL scheme** — ship `readdle-spark://openmessage?messageId=<url-encoded RFC822 Message-ID>`; on-device verification (**F2 / R5**); adjust `spark_link.py` if Readdle changes.
-- **Sender selection** — `digest candidates` + keep flags shipped (**A, E**); interactive keep / walkthrough = **R1, R4** in **Implementation progress**.
+- **Sender selection** — `digest candidates` + keep flags (**A, E**); `digest run` / dry-run **`messages[]`** carry **`digest_source_candidate`** (**F**); interactive keep / walkthrough = **R1, R4** in **Implementation progress**.
