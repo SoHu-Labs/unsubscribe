@@ -843,3 +843,124 @@ persona_prompt: "p"
     assert out[1].get("topic") == "z"
     assert "strict:" in out[1].get("error", "")
     assert run_m.call_count == 1
+
+
+def test_digest_candidates_no_topic_returns_2(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from email_digest.cli import main
+
+    with patch("email_digest.cli.GmailApiBackend.from_env") as from_env:
+        rc = main(["digest", "candidates"])
+    assert rc == 2
+    from_env.assert_not_called()
+    assert "topic" in capsys.readouterr().err.lower()
+
+
+def test_digest_candidates_invalid_since_skips_gmail(tmp_path: Path) -> None:
+    from email_digest.cli import main
+
+    td = tmp_path / "tcand_since"
+    td.mkdir()
+    (td / "solo.yaml").write_text(_minimal_topic_yaml(name="solo"), encoding="utf-8")
+    with patch("email_digest.cli.GmailApiBackend.from_env") as from_env:
+        rc = main(
+            [
+                "digest",
+                "candidates",
+                "solo",
+                "--since",
+                "nope",
+                "--topics-dir",
+                str(td),
+            ]
+        )
+    assert rc == 2
+    from_env.assert_not_called()
+
+
+def test_digest_candidates_config_error_skips_gmail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+
+    td = tmp_path / "tcand_cfg"
+    td.mkdir()
+    (td / "solo.yaml").write_text("name: only\n", encoding="utf-8")
+    with patch("email_digest.cli.GmailApiBackend.from_env") as from_env:
+        rc = main(["digest", "candidates", "solo", "--topics-dir", str(td)])
+    assert rc == 1
+    from_env.assert_not_called()
+    data = json.loads(capsys.readouterr().out)
+    assert data["topic"] == "solo"
+    assert "config:" in data["error"]
+
+
+def test_digest_candidates_strict_skips_gmail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+
+    td = tmp_path / "tcand_st"
+    td.mkdir()
+    (td / "solo.yaml").write_text(
+        """
+name: not_solo
+display_name: "X"
+senders: ["digest@news.com"]
+window_days: 7
+extract_model: fast
+synthesize_model: smart
+persona_prompt: "p"
+""",
+        encoding="utf-8",
+    )
+    with patch("email_digest.cli.GmailApiBackend.from_env") as from_env:
+        rc = main(
+            ["digest", "candidates", "solo", "--strict", "--topics-dir", str(td)]
+        )
+    assert rc == 1
+    from_env.assert_not_called()
+    err = json.loads(capsys.readouterr().out)
+    assert "strict:" in err["error"]
+
+
+def test_digest_candidates_json_lists_rows(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+    from unsubscribe.gmail_facade import GmailHeaderSummary
+
+    td = tmp_path / "tcand_ok"
+    td.mkdir()
+    (td / "solo.yaml").write_text(_minimal_topic_yaml(name="solo"), encoding="utf-8")
+
+    unsub = "<https://vendor.example/unsub>"
+    s = GmailHeaderSummary(
+        id="m1",
+        thread_id="t",
+        from_="News <news@example.com>",
+        subject="Weekly",
+        date="Mon, 1 Jan 2024 00:00:00 +0000",
+        snippet="sn",
+        list_unsubscribe=unsub,
+        list_unsubscribe_post=None,
+        delivered_to=None,
+        rfc_message_id="<weekly@example.com>",
+    )
+    facade = MagicMock()
+    facade.list_messages.return_value = [s]
+
+    with (
+        patch("email_digest.cli.GmailApiBackend.from_env", return_value=MagicMock()),
+        patch("email_digest.cli.GmailFacade", return_value=facade),
+    ):
+        rc = main(["digest", "candidates", "solo", "--topics-dir", str(td)])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data) == 1
+    row = data[0]
+    assert row["id"] == "m1"
+    assert row["digest_source_candidate"] is True
+    assert row["rfc_message_id"] == "<weekly@example.com>"
+    facade.list_messages.assert_called_once()

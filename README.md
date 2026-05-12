@@ -22,6 +22,7 @@ pip install -e ".[dev]"
 | LM Studio base URL | `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` (optional local fallback) |
 | LM Studio model id (fast local, default Qwen3.5 4B) | `LM_STUDIO_MODEL` | Must match LM Studio Local Server; on-disk preset `mlx-community/Qwen3.5-4B-MLX-4bit` (`local-chat` `src/llm.py`) |
 | LM Studio model id (local synthesis, default Qwen3 4B Instruct) | `LM_STUDIO_MODEL_SMART` | Must match LM Studio; on-disk preset `lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` |
+| LM Studio operator runbook (alias → env → presets) | — | **`docs/LM_STUDIO_DIGEST.md`** |
 | Digest SQLite (optional override) | `DIGEST_CACHE_DB` | Defaults to `<repo>/cache/digest.sqlite` (gitignored) |
 
 **Spark deep-links:** the digest uses `readdle-spark://openmessage?messageId=…` per the implementation plan. Readdle may change URL schemes; confirm on your device when convenient and update `src/email_digest/spark_link.py` if needed.
@@ -44,6 +45,7 @@ python -m email_digest digest run ai --strict --dry-run
 python -m email_digest digest run ai
 python -m email_digest digest run --all [--dry-run]
 python -m email_digest digest run --all --strict [--dry-run]
+python -m email_digest digest candidates <topic>
 python -m email_digest digest run ai --cache-db /path/to/custom.sqlite
 python -m email_digest digest cost
 python -m email_digest digest cost --days 14 --cache-db /path/to/custom.sqlite
@@ -52,12 +54,13 @@ python -m email_digest digest cost --json
 
 Cron / launchd: start from **`scripts/digest-cron.example.sh`** (set `GOOGLE_OAUTH_TOKEN`, optional `DIGEST_REPO` / `UNSUBSCRIBE_KEEP` / `DIGEST_CACHE_DB`).
 
-`--dry-run`: JSON only (collect + extract + `trending`). **Without** `--dry-run`: adds LLM synthesis + self-contained HTML at `output/<topic>_<YYYY-MM-DD>.html` (and `synthesis` / `output_html` / optional `emailed_to` keys in the printed JSON). Per-message Gmail fetch or extraction errors append one line to **`output/_failures/<YYYY-MM-DD>.log`** (tab-separated fields: UTC ISO timestamp, topic, Gmail message id, exception type, message); the run continues with the remaining messages. Use `--output-dir` / `--template-dir` to override defaults (failure logs live under the chosen output directory’s `_failures/`). Gmail OAuth is **not** loaded when the invocation is invalid (missing topic / `run` without `topic` or `--all`, or malformed `--since`), when **single-topic** config or **`--strict`** fails before work starts, or when **`digest run --all`** has **no** topic that reaches `run_digest` (empty `*.yaml` set, or every file fails YAML load or **`--strict`** before any run). **`digest run --strict`** (single topic or **`--all`**) enforces the same YAML ``name`` == file stem rule as **`digest topics --strict`**; on mismatch, JSON `{ "topic", "file", "error" }` and exit **1**. **`digest run <topic>`** on failure prints JSON `{ "topic", "file", "error" }` and exits **1** (missing/invalid YAML or pipeline exception). Bad **`--since`** shape exits **2** with a stderr message. **`digest run --all`**: prints a JSON array in sorted filename order; if any topic fails (bad YAML, **`--strict`** stem mismatch, or pipeline error), that element is `{ "topic", "file", "error" }` and the process exits **1**; all success exits **0**.
+`--dry-run`: JSON only (collect + extract + `trending`). **Without** `--dry-run`: adds LLM synthesis + self-contained HTML at `output/<topic>_<YYYY-MM-DD>.html` (and `synthesis` / `output_html` / optional `emailed_to` keys in the printed JSON). **`digest candidates <topic>`** lists Gmail headers for the topic’s query and prints JSON with **`digest_source_candidate`** (list/newsletter-style heuristics; no LLM). Per-message Gmail fetch or extraction errors append one line to **`output/_failures/<YYYY-MM-DD>.log`** (tab-separated fields: UTC ISO timestamp, topic, Gmail message id, exception type, message); the run continues with the remaining messages. Use `--output-dir` / `--template-dir` to override defaults (failure logs live under the chosen output directory’s `_failures/`). Gmail OAuth is **not** loaded when the invocation is invalid (missing topic / `run` without `topic` or `--all`, or malformed `--since`), when **single-topic** config or **`--strict`** fails before work starts, when **`digest candidates`** has no topic or bad `--since` / config / strict before listing, or when **`digest run --all`** has **no** topic that reaches `run_digest` (empty `*.yaml` set, or every file fails YAML load or **`--strict`** before any run). **`digest run --strict`** (single topic or **`--all`**) enforces the same YAML ``name`` == file stem rule as **`digest topics --strict`**; on mismatch, JSON `{ "topic", "file", "error" }` and exit **1**. **`digest run <topic>`** on failure prints JSON `{ "topic", "file", "error" }` and exits **1** (missing/invalid YAML or pipeline exception). Bad **`--since`** shape exits **2** with a stderr message. **`digest run --all`**: prints a JSON array in sorted filename order; if any topic fails (bad YAML, **`--strict`** stem mismatch, or pipeline error), that element is `{ "topic", "file", "error" }` and the process exits **1**; all success exits **0**.
 
 ## Docs
 
 - `docs/AGENT_PLAN_CONTRACT.md` — **how to write plan slices** (permissions, caveats, follow-ups, acceptance) so implementers do not guess
 - `docs/PROJECT_BRIEF_EMAIL_SUMMARIES.md` — digest engine project brief
 - `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md` — implementation plan
+- `docs/LM_STUDIO_DIGEST.md` — LM Studio env vars and model id alignment for digest aliases
 - `docs/INVENTORY.md` — code inventory
 - `docs/LESSONS_LEARNED.md` — Gmail API performance notes

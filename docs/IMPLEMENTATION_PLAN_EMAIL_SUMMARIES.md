@@ -168,7 +168,8 @@ Send the rendered HTML with `users.messages.send` using the same OAuth token as 
 |------|--------|--------|
 | M2–M4 (digest engine, cache, synthesis, HTML) | **Shipped** in repo | Older plan sections are narrative; no separate contract blocks retrofitted unless we reopen a milestone. |
 | M5 (cron, CLI polish, cost dashboard) | **Shipped** — see **Slice: M5** below | Acceptance is the contract of record. |
-| **STILL OPEN** (below) | Product / env verification | Not blocking M5 merge; tracked as follow-ups in M5 slice. |
+| **Slices C → D → B → A** (LM Studio runbook, Spark contract tests, digest classification, `digest candidates`) | **Shipped** — sections below **Post-M5** | Smallest-scope-first order; closes most of F1/F3 documentation path; F2 remains manual. |
+| **STILL OPEN** (below) | Product / env verification | Not blocking; F2 device check; interactive keep-list editing still manual outside CLI. |
 
 ---
 
@@ -225,7 +226,82 @@ Send the rendered HTML with `users.messages.send` using the same OAuth token as 
 | F2 | On-device verification of Spark `readdle-spark://` scheme | manual | no |
 | F3 | Sender allowlist UX (`~/.unsubscribe_keep.json`) | product | no |
 
-**Post-M5:** Any new behavior (digest candidate preview CLI, LM Studio runbook hardening, classifier integration) needs its **own** named slice using the §7 template in `docs/AGENT_PLAN_CONTRACT.md` before implementation; do not extend M5 retroactively.
+**Post-M5:** Any new behavior needs its **own** named slice using the §7 template in `docs/AGENT_PLAN_CONTRACT.md` before implementation; do not extend M5 retroactively.
+
+Implementation order for digest follow-ups (**smallest scope first**): **Slice C → Slice D → Slice B → Slice A** (each closes or narrows plan follow-ups F1–F3 where noted).
+
+### Slice: C — LM Studio operator runbook + alias resolution surface
+
+- **Goal:** Operators can see exactly which litellm model string digest aliases `local` / `local_smart` resolve to from the environment, without reading `llm.py`; on-disk Qwen presets stay documented as **defaults to aim for**, not hard-coded ids in code.
+- **Non-goals:** Changing default DeepSeek aliases, adding live LM Studio HTTP calls in CI, or auto-detecting LM Studio’s UI model list.
+- **Invariants:** `MODEL_ALIASES` keys `fast`, `smart`, `local`, `local_smart` unchanged; `_resolve_model` / `complete` behavior unchanged; `LM_STUDIO_MODEL` overrides `local`; `LM_STUDIO_MODEL_SMART` overrides `local_smart` with fallback to `LM_STUDIO_MODEL` then default string.
+- **Coupling:** `src/email_digest/llm.py`, `docs/LM_STUDIO_DIGEST.md` (new), `README.md` (one link under Credentials), `tests/test_llm_resolve_alias.py` (new).
+- **Preconditions:** M5 merged; env `email-digest`; `pip install -e ".[dev]"`.
+- **Permissions & environment:**
+
+| Class | Rule |
+|--------|------|
+| **Network** | MUST NOT (no LM Studio in tests). |
+| **Filesystem** | Doc + tests only under repo. |
+| **Git** | No trailers; empty `core.hooksPath` on commit if hooks inject. |
+| **Shell** | `mamba run -n email-digest python -m pytest tests/ -q` → **0**. |
+
+- **Caveats & footguns:**
+  1. **Symptom:** Docs list folder names but LM Studio shows different strings. **Cause:** UI vs on-disk path mismatch. **Wrong fix:** hard-code UI strings in Python. **Right fix:** runbook tells operator to copy the **Local Server** model id into env vars.
+  2. **Symptom:** `resolve_model_alias` diverges from `complete`. **Cause:** duplicate resolution logic. **Wrong fix:** two code paths. **Right fix:** one public wrapper calling existing `_resolve_model`.
+
+- **Procedure:** 1) Add `resolve_model_alias` in `llm.py` delegating to `_resolve_model`. 2) Add `docs/LM_STUDIO_DIGEST.md` (env vars, id copy steps, Qwen preset targets, `digest cost` pointer). 3) Link from README. 4) Tests for env override + `local_smart` fallback chain.
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:** none (F1 narrowed to “operator follows runbook”; no code blocker).
+
+### Slice: D — Spark deeplink contract (tests + frozen URL shape)
+
+- **Goal:** The `readdle-spark://openmessage?messageId=<url-encoded RFC822>` contract is encoded in tests so accidental regressions fail CI; documentation states encoding rules.
+- **Non-goals:** Changing the URL scheme or query key without on-device verification (F2); adding Spark app automation.
+- **Invariants:** `spark_deeplink` return shape unchanged for existing callers; empty/whitespace input → `""`; non-empty uses `quote(..., safe='')` on the full RFC822 string (angle brackets included).
+- **Coupling:** `tests/test_spark_link.py`, `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md` (this slice), `README.md` only if the slice adds a one-line pointer to tests as contract.
+- **Preconditions:** Slice C optional merge order independent.
+- **Permissions & environment:** Same as C (pytest only).
+
+- **Caveats & footguns:**
+  1. **Symptom:** Links open wrong thread. **Cause:** double-encoding or stripping angle brackets. **Wrong fix:** guess encoding. **Right fix:** tests assert decoded `messageId` equals raw input `mid` (existing); add reserved-character cases only if they round-trip.
+
+- **Procedure:** 1) Add tests for characters that require percent-encoding beyond angle brackets (e.g. `&`, space). 2) No `spark_link.py` change unless a test proves a bug (none expected).
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:** F2 remains manual device check.
+
+### Slice: B — Digest-source classification helper
+
+- **Goal:** Digest code can ask “does this header row look like a list/newsletter source?” using the **same** heuristics as unsubscribe’s `is_unsubscribable_newsletter`, without duplicating logic (brief: digest needs the inverse at **keep-list** semantics; classification signal is the same bulk/list shape).
+- **Non-goals:** Wiring classification into `run_digest` filtering (that belongs in slice A or a later pipeline slice); changing `is_unsubscribable_newsletter` behavior; body HTML prefetch in CI.
+- **Invariants:** `is_unsubscribable_newsletter` unchanged; new public API is a thin wrapper with an explicit digest-oriented name; all existing `test_classifier.py` tests still pass.
+- **Coupling:** `src/unsubscribe/classifier.py`, `tests/test_digest_classifier.py` (new), `docs/INVENTORY.md` (optional one-line update).
+- **Preconditions:** Slice D merged or parallel (no code dependency).
+- **Permissions & environment:** pytest only; no Gmail.
+
+- **Caveats & footguns:**
+  1. **Symptom:** Digest marks personal mail as candidate. **Cause:** copied heuristics diverged from unsubscribe. **Wrong fix:** fork logic. **Right fix:** delegate to `is_unsubscribable_newsletter` only.
+
+- **Procedure:** 1) Add `is_digest_source_candidate(...) -> bool` delegating to `is_unsubscribable_newsletter`. 2) Tests: equality to newsletter helper on representative headers; body-link flag parity.
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:** Pipeline may later filter or rank by this flag (separate slice if behavior-visible).
+
+### Slice: A — `digest candidates` CLI (topic-scoped list + classification JSON)
+
+- **Goal:** For a topic YAML, list Gmail messages matching the digest query and emit **JSON** with per-row `digest_source_candidate` (from slice B) plus headers needed to decide keep-list updates, without running extraction/LLM.
+- **Non-goals:** Interactive TUI; mutating keep list from this command; `--all` topics in one invocation (defer); synthesis/HTML.
+- **Invariants:** Exit codes align with `digest run` where applicable: missing topic file / config error → **1** with stderr or JSON error shape per CLI style; invalid `--since` → **2**; success → **0** + stdout JSON array. Gmail loads only after config parse succeeds (same spirit as single-topic `run`). JSON keys stable: at least `id`, `from`, `subject`, `date`, `rfc_message_id`, `digest_source_candidate`.
+- **Coupling:** `src/email_digest/cli.py`, `tests/test_digest_cli.py`, `README.md` (CLI one-liner), `docs/INVENTORY.md` (CLI table row optional).
+- **Preconditions:** Slice B merged (import `is_digest_source_candidate`); `headers_from_summary` from `gmail_facade`.
+- **Permissions & environment:** Tests mock `GmailApiBackend.from_env` / `GmailFacade`; no live Gmail in CI.
+
+- **Caveats & footguns:**
+  1. **Symptom:** Classification always false. **Cause:** `headers_from_summary` omits fields classifier needs. **Wrong fix:** re-fetch full messages. **Right fix:** map `GmailHeaderSummary` fields into the same header dict shape as unsubscribe uses (`headers_from_summary` already includes List-Unsubscribe when present).
+  2. **Symptom:** OAuth on typo topic name. **Cause:** `from_env` before config load. **Wrong fix:** swallow errors. **Right fix:** load YAML first, then `from_env` (mirror `digest run` single-topic ordering).
+
+- **Procedure:** 1) Add `digest candidates <topic>` argparse + `_digest_candidates`. 2) build query via `build_digest_gmail_query`; `facade.list_messages`. 3) Emit JSON array. 4) Tests with mocks. 5) README example.
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:** Interactive keep-list merge (F3 remainder); `digest candidates --all` (optional).
 
 ---
 

@@ -13,10 +13,12 @@ from typing import Any
 import yaml
 
 from unsubscribe.gmail_api_backend import GmailApiBackend
-from unsubscribe.gmail_facade import GmailFacade
+from unsubscribe.gmail_facade import GmailFacade, headers_from_summary
+from unsubscribe.classifier import is_digest_source_candidate
 
 from email_digest.cache import cost_report_payload, format_cost_report
 from email_digest.config import load_topic_config
+from email_digest.gmail_query import build_digest_gmail_query
 from email_digest.paths import default_cache_db_path, repo_root
 from email_digest.pipeline import run_digest
 
@@ -247,6 +249,71 @@ def _digest_run(ns: argparse.Namespace) -> int:
     return 0
 
 
+def _digest_candidates(ns: argparse.Namespace) -> int:
+    """List Gmail headers for a topic query + ``digest_source_candidate`` (no LLM)."""
+    topics_dir: Path = ns.topics_dir or _default_topics_dir()
+    if not ns.topic:
+        print("Provide a topic name (stem of ``topics/<stem>.yaml``).", file=sys.stderr)
+        return 2
+
+    since: date | None = None
+    if ns.since:
+        try:
+            since = _parse_since(ns.since)
+        except ValueError:
+            print(
+                f"Invalid --since {ns.since!r}; use YYYY-MM-DD (Gregorian calendar date).",
+                file=sys.stderr,
+            )
+            return 2
+
+    topic_path = topics_dir / f"{ns.topic}.yaml"
+    try:
+        cfg = load_topic_config(topic_path)
+    except (OSError, KeyError, ValueError, TypeError, yaml.YAMLError) as e:
+        _print_digest_run_error(
+            topic=str(ns.topic),
+            file=topic_path.name,
+            error=f"config: {e}",
+        )
+        return 1
+    if ns.strict and cfg.name != topic_path.stem:
+        _print_digest_run_error(
+            topic=str(ns.topic),
+            file=topic_path.name,
+            error=(
+                f"strict: YAML name {cfg.name!r} must match file stem {topic_path.stem!r} "
+                "(rename the file or change ``name:``)."
+            ),
+        )
+        return 1
+
+    backend = GmailApiBackend.from_env()
+    facade = GmailFacade(backend)
+    query = build_digest_gmail_query(
+        window_days=cfg.window_days,
+        senders=list(cfg.senders),
+        folders=list(cfg.folders),
+        since=since,
+    )
+    rows = facade.list_messages(query, max_results=ns.max_results)
+    rows_out: list[dict[str, Any]] = []
+    for m in rows:
+        h = headers_from_summary(m)
+        rows_out.append(
+            {
+                "id": m.id,
+                "from": m.from_,
+                "subject": m.subject,
+                "date": m.date,
+                "rfc_message_id": m.rfc_message_id,
+                "digest_source_candidate": is_digest_source_candidate(h),
+            }
+        )
+    print(json.dumps(rows_out, indent=2))
+    return 0
+
+
 def _main_digest(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="email_digest digest")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -355,6 +422,40 @@ def _main_digest(argv: list[str]) -> int:
         help="SQLite cache path (default: <repo>/cache/digest.sqlite)",
     )
 
+    cand_p = sub.add_parser(
+        "candidates",
+        help="List Gmail messages for a topic query (JSON + digest_source_candidate; no LLM)",
+    )
+    cand_p.add_argument(
+        "topic",
+        nargs="?",
+        default=None,
+        help="Topic stem (``topics/<stem>.yaml``)",
+    )
+    cand_p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Require YAML ``name`` to match the file stem (same as ``digest run --strict``)",
+    )
+    cand_p.add_argument(
+        "--topics-dir",
+        type=Path,
+        default=None,
+        help="Override topics directory (default: <repo>/topics)",
+    )
+    cand_p.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Lower date bound YYYY-MM-DD (maps to Gmail ``after:``)",
+    )
+    cand_p.add_argument(
+        "--max-results",
+        type=int,
+        default=50,
+        help="Cap for Gmail ``messages.list`` (default 50)",
+    )
+
     ns = p.parse_args(argv)
     if ns.cmd == "version":
         print(_package_version())
@@ -363,6 +464,8 @@ def _main_digest(argv: list[str]) -> int:
         return _digest_cost(ns.days, ns.cache_db, json_out=ns.json)
     if ns.cmd == "topics":
         return _digest_topics(ns)
+    if ns.cmd == "candidates":
+        return _digest_candidates(ns)
     if ns.cmd == "run":
         return _digest_run(ns)
     return 1
@@ -375,7 +478,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not argv:
         print(
-            "Usage: python -m email_digest [--version|-V] digest <cost|topics|run|version …> | "
+            "Usage: python -m email_digest [--version|-V] digest "
+            "<candidates|cost|topics|run|version …> | "
             "python -m email_digest unsubscribe [check …]",
             file=sys.stderr,
         )

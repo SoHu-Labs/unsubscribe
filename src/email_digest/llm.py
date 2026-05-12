@@ -33,6 +33,11 @@ def _resolve_model(alias: str) -> str:
     return MODEL_ALIASES.get(alias, alias)
 
 
+def resolve_model_alias(alias: str) -> str:
+    """Return the concrete litellm model id for a digest YAML alias (diagnostics / operators)."""
+    return _resolve_model(alias)
+
+
 def _opencode_auth_json_path() -> Path:
     return Path.home() / ".local" / "share" / "opencode" / "auth.json"
 

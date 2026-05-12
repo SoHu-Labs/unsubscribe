@@ -60,3 +60,19 @@ def is_unsubscribable_newsletter(
     if not _bulk_marketing(norm):
         return False
     return True
+
+
+def is_digest_source_candidate(
+    headers: dict[str, str],
+    *,
+    has_body_unsubscribe_link: bool = False,
+) -> bool:
+    """
+    True when the message looks like a list / newsletter source the digest may want.
+
+    Uses the same heuristics as :func:`is_unsubscribable_newsletter`; digest vs
+    unsubscribe differs at **keep-list** semantics (see project brief), not here.
+    """
+    return is_unsubscribable_newsletter(
+        headers, has_body_unsubscribe_link=has_body_unsubscribe_link
+    )
