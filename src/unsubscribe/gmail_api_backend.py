@@ -6,6 +6,7 @@ import base64
 import os
 import re
 import threading
+from email.utils import getaddresses
 from concurrent.futures import ThreadPoolExecutor
 from html import unescape
 from pathlib import Path
@@ -26,7 +27,30 @@ _METADATA_HEADERS = (
     "Subject",
     "From",
     "Date",
+    "Delivered-To",
+    "To",
 )
+
+
+def _mailbox_from_rfc5322_header_value(raw: str | None) -> str | None:
+    """First ``@`` address from a possibly multi-recipient RFC 5322 header value."""
+    if not raw or not (raw := raw.strip()):
+        return None
+    addrs = getaddresses([raw.replace("\n", " ")])
+    for _name, addr in addrs:
+        a = addr.strip()
+        if a and "@" in a:
+            return a
+    return None
+
+
+def _recipient_mailbox_for_browser_forms(headers: dict[str, str]) -> str | None:
+    """Prefer ``Delivered-To`` (actual delivery) then ``To`` for ``type=email`` form prefills."""
+    for key in ("Delivered-To", "To"):
+        em = _mailbox_from_rfc5322_header_value(headers.get(key))
+        if em:
+            return em
+    return None
 
 _MAX_BODY_TEXT_CHARS = 500
 
@@ -76,6 +100,7 @@ def _header_summary_from_get_api(get_api, list_item: dict) -> GmailHeaderSummary
         snippet=minimal.get("snippet", ""),
         list_unsubscribe=headers.get("List-Unsubscribe"),
         list_unsubscribe_post=headers.get("List-Unsubscribe-Post"),
+        delivered_to=_recipient_mailbox_for_browser_forms(headers),
     )
 
 

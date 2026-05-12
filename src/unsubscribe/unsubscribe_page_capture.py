@@ -3,9 +3,12 @@
 Sessions are created **whenever** ``batch_browser_unsubscribe`` runs — the same moment you already
 attach to Brave via ``GOOGLEADS_BROWSER_DEBUGGER_ADDRESS`` (no extra env toggle).
 
-Tune behavior with **module constants** below (``PAGE_CAPTURE_SCREENSHOTS``,
-``PAGE_CAPTURE_WAIT_S``, ``PAGE_CAPTURE_MIN_VISIBLE_CHARS``). The capture **base directory**
-is chosen by ``page_capture_base_dir()`` (see there).
+**PNG** snapshots are **off** by default (large on disk). Set environment variable
+``UNSUBSCRIBE_PAGE_CAPTURE_SCREENSHOTS=1`` when you want ``*.png`` for inspection.
+
+Timing / SPA: ``PAGE_CAPTURE_WAIT_S`` and ``PAGE_CAPTURE_MIN_VISIBLE_CHARS`` below.
+The capture **base directory** is ``page_capture_base_dir()`` (repo-root ``.unsubscribe_page_capture``
+for a source checkout).
 
 Each snapshot writes:
 
@@ -23,6 +26,7 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
+import os
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -36,12 +40,13 @@ from unsubscribe.page_confirmation_markers import (
     CONFIRMATION_TEXT_MARKERS,
     PREFERENCE_CENTER_SNIPPETS,
     normalize_text_for_confirmation_match,
+    rough_text_from_html_for_confirmation,
 )
 
 logger = logging.getLogger(__name__)
 
-# One browser job: (email_index, subject, sender_display, url)
-BrowserJobRow = tuple[int | None, str, str, str]
+# One browser job: (email_index, subject, sender_display, url, delivered_to_hint | None)
+BrowserJobRow = tuple[int | None, str, str, str, str | None]
 
 
 def page_capture_base_dir() -> Path:
@@ -63,10 +68,63 @@ def page_capture_base_dir() -> Path:
     return (Path.cwd() / ".unsubscribe_page_capture").resolve()
 
 
-# --- Format-learning capture (no env vars): edit here as needed ---
-PAGE_CAPTURE_SCREENSHOTS = True
+# --- Format-learning capture ---
 PAGE_CAPTURE_WAIT_S = 12.0
 PAGE_CAPTURE_MIN_VISIBLE_CHARS = 80
+
+
+def page_capture_include_png() -> bool:
+    """Large files — enabled only when ``UNSUBSCRIBE_PAGE_CAPTURE_SCREENSHOTS=1`` (or true/yes)."""
+
+    return (os.environ.get("UNSUBSCRIBE_PAGE_CAPTURE_SCREENSHOTS") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def strip_png_from_capture_session_dir(session_dir: Path) -> int:
+    """Drop ``*.png`` files and strip ``png`` from each snapshot's ``files`` in ``manifest.json``."""
+
+    if page_capture_include_png():
+        return 0
+    n = 0
+    for p in session_dir.glob("*.png"):
+        try:
+            p.unlink()
+            n += 1
+        except OSError:
+            pass
+    man_path = session_dir / "manifest.json"
+    try:
+        raw = man_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except Exception:
+        return n
+    dirty = False
+    for snap in data.get("snapshots") or []:
+        files = snap.get("files")
+        if isinstance(files, dict) and files.pop("png", None) is not None:
+            dirty = True
+    if dirty:
+        man_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return n
+
+
+def cleanup_all_page_capture_png_sessions_if_disabled() -> int:
+    """Run :func:`strip_png_from_capture_session_dir` for every ``session_*`` under the base dir."""
+
+    if page_capture_include_png():
+        return 0
+    base = page_capture_base_dir()
+    if not base.is_dir():
+        return 0
+    total = 0
+    for session_dir in sorted(base.glob("session_*")):
+        if session_dir.is_dir():
+            total += strip_png_from_capture_session_dir(session_dir)
+    return total
+
 
 _MANIFEST_TEXT_EXCERPT = 8000
 _VISIBLE_FILE_MAX_CHARS = 500_000
@@ -168,14 +226,7 @@ def _html_excerpt(driver: WebDriver, max_chars: int = 12000) -> str:
 def _rough_visible_text_from_html(html: str, max_chars: int = 80_000) -> str:
     """Strip tags so confirmation/unsub phrases in static HTML still classify when innerText lags."""
 
-    if not html:
-        return ""
-    t = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html)
-    t = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", t)
-    t = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", t)
-    t = re.sub(r"<[^>]+>", " ", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t[:max_chars] if len(t) > max_chars else t
+    return rough_text_from_html_for_confirmation(html, max_chars=max_chars)
 
 
 def categorize_unsubscribe_page(
@@ -322,15 +373,16 @@ class PageCaptureSession:
         session_dir.mkdir(parents=False, exist_ok=False)
 
         job_rows: list[dict[str, Any]] = []
-        for email_index, subject, sender, url in jobs:
-            job_rows.append(
-                {
-                    "email_index": email_index,
-                    "subject": subject,
-                    "sender": sender,
-                    "initial_url": url,
-                }
-            )
+        for email_index, subject, sender, url, subscriber_hint in jobs:
+            row: dict[str, Any] = {
+                "email_index": email_index,
+                "subject": subject,
+                "sender": sender,
+                "initial_url": url,
+            }
+            if subscriber_hint:
+                row["subscriber_hint"] = subscriber_hint
+            job_rows.append(row)
 
         meta = {
             "schema_version": 1,
@@ -354,6 +406,33 @@ class PageCaptureSession:
         )
         return cls(session_dir)
 
+    def strip_png_artifacts_if_disabled(self) -> None:
+        """Remove ``*.png`` and ``files/png`` manifest entries when screenshots are off."""
+
+        strip_png_from_capture_session_dir(self.session_dir)
+
+    def path_to_final_html_for_job(self, job_batch_index: int) -> Path | None:
+        """Path to the **latest** saved ``*.html`` for this job (by snapshot ``sequence``)."""
+
+        man_path = self.session_dir / "manifest.json"
+        try:
+            data = json.loads(man_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        snaps = [
+            s
+            for s in (data.get("snapshots") or [])
+            if s.get("job_batch_index") == job_batch_index
+        ]
+        if not snaps:
+            return None
+        best = max(snaps, key=lambda s: int(s.get("sequence") or 0))
+        html_name = (best.get("files") or {}).get("html") or ""
+        if not html_name:
+            return None
+        p = self.session_dir / html_name
+        return p if p.is_file() else None
+
     def record_snapshot(
         self,
         driver: WebDriver,
@@ -364,7 +443,7 @@ class PageCaptureSession:
         job: BrowserJobRow,
         error: str | None = None,
     ) -> None:
-        email_index, _subject, _sender, _job_url = job
+        email_index, _subject, _sender, _job_url, _subscriber_hint = job
 
         self._seq += 1
         safe_step = re.sub(r"[^\w\-]+", "_", step).strip("_")[:60]
@@ -416,7 +495,7 @@ class PageCaptureSession:
             logger.warning("Could not save capture HTML %s: %s", html_path, exc)
             files["html"] = ""
 
-        if PAGE_CAPTURE_SCREENSHOTS:
+        if page_capture_include_png():
             png_name = f"{stem}.png"
             png_path = self.session_dir / png_name
             try:

@@ -15,19 +15,29 @@ from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support.ui import WebDriverWait
 
 from unsubscribe.browser_helpers import chrome_driver_attach
-from unsubscribe.live_brave_trace import save_live_brave_trace
+from unsubscribe.live_brave_trace import (
+    cleanup_unsubscribe_trace_png_files,
+    live_brave_trace_dir,
+    save_live_brave_failure_trace,
+)
 from unsubscribe.page_confirmation_markers import (
     CONFIRMATION_TEXT_MARKERS,
     PREFERENCE_CENTER_SNIPPETS,
+    html_suggests_unsubscribe_confirmation,
     normalize_text_for_confirmation_match,
 )
 from unsubscribe.timed_run import TimedRun
-from unsubscribe.unsubscribe_page_capture import PageCaptureSession
+from unsubscribe.unsubscribe_page_capture import (
+    PageCaptureSession,
+    cleanup_all_page_capture_png_sessions_if_disabled,
+)
 
 logger = logging.getLogger(__name__)
 
-# Jobs: ``(email_index, subject, sender_display, url)`` — ``email_index`` may be ``None``.
-BrowserUnsubscribeJob = tuple[int | None, str, str, str]
+# Jobs: ``(email_index, subject, sender_display, url, delivered_to_hint)`` — ``email_index`` and
+# ``delivered_to_hint`` may be ``None``. The fifth field is the recipient mailbox (from Gmail headers)
+# for prefilling ``type=email`` unsubscribe forms; see ``batch_browser_unsubscribe``.
+BrowserUnsubscribeJob = tuple[int | None, str, str, str, str | None]
 
 
 class UnsubscribeFlowCase:
@@ -114,21 +124,29 @@ def _maybe_click_unsubscribe_from_all(driver: WebDriver) -> bool:
 
 
 def _maybe_fill_visible_email_field(driver: WebDriver, email: str) -> bool:
-    """Fill the first visible, empty email-like input (preference centers)."""
+    """Fill the first visible, empty email-like input (Sites use ``type=email`` or ``type=text``)."""
     raw = (email or "").strip()
     if not raw:
         return False
     selectors = (
         'input[type="email"]',
-        'input[name*="email"]',
-        'input[id*="email"]',
-        'input[placeholder*="email"]',
-        'input[placeholder*="Email"]',
+        'input[name*="email" i]',
+        'input[id*="email" i]',
+        'input[placeholder*="email" i]',
+        'input[placeholder*="e-mail" i]',
+        'input[autocomplete="email"]',
+        'input[type="text"][placeholder*="mail" i]',
+        'input[type="text"][placeholder*="E-mail" i]',
     )
+    seen: set[int] = set()
     for sel in selectors:
         try:
             for inp in driver.find_elements(By.CSS_SELECTOR, sel):
                 try:
+                    oid = id(inp)
+                    if oid in seen:
+                        continue
+                    seen.add(oid)
                     if not inp.is_displayed():
                         continue
                     if (inp.get_attribute("value") or "").strip():
@@ -150,6 +168,10 @@ def _find_unsubscribe_element(driver: WebDriver) -> WebElement:
         '//button[contains(text(), "Unsubscribe")]',
         '//a[contains(text(), "unsubscribe")]',
         '//button[contains(text(), "unsubscribe")]',
+        '//input[@type="submit" and contains(translate(@value, '
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "unsubscribe")]',
+        '//input[@type="submit" and contains(translate(@value, '
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "opt out")]',
         '//a[contains(text(), "Opt out")]',
         '//button[contains(text(), "Opt out")]',
         '//a[contains(text(), "opt-out")]',
@@ -177,6 +199,13 @@ def _find_unsubscribe_element(driver: WebDriver) -> WebElement:
     let els = document.querySelectorAll('a, button, span, div, [role="button"]');
     for (let el of els) {
         const t = (el.textContent || '').trim().toLowerCase();
+        for (const n of needles) {
+            if (t.includes(n)) { return el; }
+        }
+    }
+    for (let el of document.querySelectorAll('input[type="submit"], input[type="button"]')) {
+        const t = ((el.value || el.getAttribute('aria-label') || '') + ' ' + (el.name || ''))
+            .trim().toLowerCase();
         for (const n of needles) {
             if (t.includes(n)) { return el; }
         }
@@ -278,6 +307,47 @@ def _try_click_unsubscribe_on_page(
         pass
 
 
+def _finalize_browser_results_from_saved_html(
+    results: list[dict[str, Any]],
+    jobs: list[BrowserUnsubscribeJob],
+    capture_session: PageCaptureSession | None,
+) -> None:
+    """Set browser ``status`` / ``detail`` from the latest captured HTML (not live DOM alone)."""
+
+    if capture_session is None:
+        return
+    for job_batch_index, (row, _job) in enumerate(
+        zip(results, jobs, strict=True), start=1
+    ):
+        if row.get("method") != "browser":
+            continue
+        path = capture_session.path_to_final_html_for_job(job_batch_index)
+        if path is None:
+            continue
+        try:
+            html = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        confirmed = html_suggests_unsubscribe_confirmation(html)
+        st = row.get("status")
+        if st == "failed":
+            if confirmed:
+                row["detail"] = (
+                    f"{row.get('detail', '')} — saved HTML contains confirmation-like wording "
+                    "(page may have settled after the error)."
+                )
+            continue
+        if confirmed:
+            row["status"] = "confirmed"
+            row["detail"] = "browser → unsubscribe confirmation found in saved page HTML ✓"
+        else:
+            row["status"] = "clicked-no-confirmation"
+            row["detail"] = (
+                "browser → saved page HTML has no clear unsubscribe-confirmation wording "
+                "(check inbox or the site)"
+            )
+
+
 def _result_row(
     email_index: int | None,
     subject: str,
@@ -305,15 +375,24 @@ def batch_browser_unsubscribe(
     subscriber_email: str | None = None,
     progress: TimedRun | None = None,
     quiet: bool = False,
+    mirror_failure_trace: bool = True,
 ) -> list[dict[str, Any]]:
     """
     Attach **once**, visit each URL in order, try to click an unsubscribe control.
 
-    Each job is ``(email_index, subject, sender, url)``. Returns one result dict per job,
-    with ``status`` in ``confirmed`` / ``clicked-no-confirmation`` / ``failed``.
+    Each job is ``(email_index, subject, sender, url, delivered_to_hint)``. Returns one result dict
+    per job, with ``status`` in ``confirmed`` / ``clicked-no-confirmation`` / ``failed``.
 
-    ``subscriber_email`` fills visible empty email inputs on preference-center pages
-    (see ``UnsubscribeFlowCase.EMAIL_FIELD_THEN_CLICK``).
+    After the loop, each **non-failed** browser row is reclassified from the **latest saved**
+    capture HTML (same confirmation markers as live detection), so the CLI report reflects what
+    was archived under ``.unsubscribe_page_capture/``, not a transient live view.
+
+    ``subscriber_email`` (or env ``UNSUBSCRIBE_SUBSCRIBER_EMAIL``) fills visible empty email
+    inputs before the main Unsubscribe action. When that is unset, each job's ``delivered_to_hint``
+    (recipient from Gmail ``Delivered-To`` / ``To``) is used for the same purpose.
+
+    ``mirror_failure_trace`` (default ``True``) writes HTML + ``.error.txt`` under
+    ``UNSUBSCRIBE_LIVE_BRAVE_TRACE_DIR`` (default ``~/Downloads``) when a job raises.
     """
     if not jobs:
         return []
@@ -336,9 +415,20 @@ def batch_browser_unsubscribe(
         )
     try:
         driver = chrome_driver_attach(debugger_address=debugger_address)
-        for idx, (email_index, subject, sender, url) in enumerate(jobs, start=1):
+        for idx, job in enumerate(jobs, start=1):
+            email_index, subject, sender, url, mailbox_hint = job
             host = urlparse(url).hostname or url[:48]
-            job_row: BrowserUnsubscribeJob = (email_index, subject, sender, url)
+            env_sub = (subscriber_email or "").strip() or None
+            hint = (mailbox_hint or "").strip() or None
+            effective_subscriber = env_sub or hint
+
+            job_row: BrowserUnsubscribeJob = (
+                email_index,
+                subject,
+                sender,
+                url,
+                mailbox_hint,
+            )
 
             def _record_step(
                 step: str,
@@ -380,7 +470,7 @@ def batch_browser_unsubscribe(
                 _try_click_unsubscribe_on_page(
                     driver,
                     settle_s=min(2.0, timeout_per_url_s / 4),
-                    subscriber_email=subscriber_email,
+                    subscriber_email=effective_subscriber,
                     record_step=_record_step,
                 )
                 time.sleep(min(1.5, timeout_per_url_s / 6))
@@ -449,11 +539,25 @@ def batch_browser_unsubscribe(
                     f"Unsubscribe action {idx}/{len(jobs)} ({host}) — failed."
                 )
                 try:
-                    save_live_brave_trace(driver, label=_url_trace_label(url))
+                    save_live_brave_failure_trace(
+                        driver,
+                        label=_url_trace_label(url),
+                        error=msg,
+                        enabled=mirror_failure_trace,
+                    )
                 except Exception as trace_exc:
                     logger.warning("Could not save trace: %s", trace_exc)
                 continue
+        _finalize_browser_results_from_saved_html(results, jobs, capture_session)
     finally:
+        try:
+            cleanup_all_page_capture_png_sessions_if_disabled()
+        except Exception as e:
+            logger.warning("Page capture PNG cleanup failed: %s", e)
+        try:
+            cleanup_unsubscribe_trace_png_files(live_brave_trace_dir())
+        except Exception as e:
+            logger.warning("Live trace PNG cleanup failed: %s", e)
         if driver is not None:
             progress.step("Closing WebDriver session (your Brave window stays open).")
             try:

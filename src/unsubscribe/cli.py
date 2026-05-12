@@ -331,8 +331,8 @@ def run_check(
                     body = body_futures[m.id].result()
                     preview = _body_preview_lines(body) if body else "(no preview)"
                     print("─" * 60)
-                    print(f"  #{num}  Subject: {m.subject!r}")
-                    print(f"  From: {m.from_}")
+                    print(f"  #{num}  From: {m.from_}")
+                    print(f"  Subject: {m.subject!r}")
                     print(f"  Date: {m.date}")
                     print()
                     print(preview)

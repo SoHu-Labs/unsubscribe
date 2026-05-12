@@ -69,6 +69,14 @@ def test_unknown_host_with_matching_text_skipped() -> None:
         extract_unsubscribe_link(html)
 
 
+def test_extract_wizzair_allows_marketing_site() -> None:
+    html = """<html><body>
+        <a href="https://www.wizzair.com/en-gb/newsletter-unsubscribe">Unsubscribe</a>
+    </body></html>"""
+    url = extract_unsubscribe_link(html)
+    assert "wizzair.com" in url
+
+
 def test_data_uri_is_unsafe() -> None:
     html = """<html><body>
         <a href="data:text/html,&lt;base href=&quot;https://x&quot;/&gt;">Unsubscribe</a>

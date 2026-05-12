@@ -47,6 +47,8 @@ _ALLOWED_BASE_DOMAINS: frozenset[str] = frozenset(
         "hubspot.com",
         "hs-sites.com",
         "google.com",
+        "wizzair.com",
+        "wizznews.com",
     }
 )
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 
 def normalize_text_for_confirmation_match(text: str) -> str:
     """Lowercase and fold typographic quotes so substring markers match DOM copy."""
@@ -34,3 +36,23 @@ PREFERENCE_CENTER_SNIPPETS: tuple[str, ...] = (
     "unsubscribe from all lists",
     "unsubscribe me from all",
 )
+
+
+def rough_text_from_html_for_confirmation(html: str, *, max_chars: int = 80_000) -> str:
+    """Strip tags/scripts so confirmation phrases in saved HTML match like live ``innerText``."""
+
+    if not html:
+        return ""
+    t = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", html)
+    t = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", t)
+    t = re.sub(r"(?is)<noscript[^>]*>.*?</noscript>", " ", t)
+    t = re.sub(r"<[^>]+>", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:max_chars] if len(t) > max_chars else t
+
+
+def html_suggests_unsubscribe_confirmation(html: str) -> bool:
+    """True if saved HTML (body text approximation) contains :data:`CONFIRMATION_TEXT_MARKERS`."""
+
+    low = normalize_text_for_confirmation_match(rough_text_from_html_for_confirmation(html))
+    return any(m in low for m in CONFIRMATION_TEXT_MARKERS)

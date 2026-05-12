@@ -11,6 +11,7 @@ import pytest
 
 from unsubscribe.gmail_api_backend import (
     GmailApiBackend,
+    _recipient_mailbox_for_browser_forms,
     html_from_gmail_message_payload,
 )
 from unsubscribe.gmail_facade import GmailHeaderSummary
@@ -64,6 +65,18 @@ def test_html_from_gmail_payload_multipart_alternative() -> None:
     assert html_from_gmail_message_payload(payload) == html
 
 
+def test_recipient_mailbox_for_browser_forms_prefers_delivered_to() -> None:
+    assert (
+        _recipient_mailbox_for_browser_forms({"Delivered-To": "a@gmail.com", "To": "b@gmail.com"})
+        == "a@gmail.com"
+    )
+    assert (
+        _recipient_mailbox_for_browser_forms({"To": "List <sub@list.com>"})
+        == "sub@list.com"
+    )
+    assert _recipient_mailbox_for_browser_forms({}) is None
+
+
 @patch("unsubscribe.gmail_api_backend.build")
 def test_list_messages_calls_metadata_then_minimal_per_message(mock_build: MagicMock) -> None:
     meta = json.loads((_FIXTURES / "metadata_message.json").read_text(encoding="utf-8"))
@@ -91,6 +104,7 @@ def test_list_messages_calls_metadata_then_minimal_per_message(mock_build: Magic
             snippet="This week: summer sale and free shipping…",
             list_unsubscribe="<https://example.com/unsub?id=1>",
             list_unsubscribe_post="List-Unsubscribe=One-Click",
+            delivered_to="reader@example.com",
         )
     ]
 
@@ -109,6 +123,8 @@ def test_list_messages_calls_metadata_then_minimal_per_message(mock_build: Magic
             "Subject",
             "From",
             "Date",
+            "Delivered-To",
+            "To",
         ],
     }
     assert second.kwargs == {"userId": "me", "id": "msg123", "format": "minimal"}

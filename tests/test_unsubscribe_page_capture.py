@@ -127,8 +127,8 @@ def test_page_capture_session_create_writes_meta_and_empty_manifest(
         "page_capture_base_dir",
         lambda: tmp_path,
     )
-    jobs: list[tuple[int | None, str, str, str]] = [
-        (2, "Weekly", "Vendor <v@v.com>", "https://u.test/start"),
+    jobs: list[tuple[int | None, str, str, str, str | None]] = [
+        (2, "Weekly", "Vendor <v@v.com>", "https://u.test/start", None),
     ]
     session = PageCaptureSession.create(jobs)
     assert session.session_dir.is_dir()
@@ -149,10 +149,9 @@ def test_record_snapshot_writes_html_and_manifest(
         "page_capture_base_dir",
         lambda: tmp_path,
     )
-    monkeypatch.setattr(unsubscribe_page_capture, "PAGE_CAPTURE_SCREENSHOTS", False)
     monkeypatch.setattr(unsubscribe_page_capture, "PAGE_CAPTURE_WAIT_S", 0.0)
-    jobs: list[tuple[int | None, str, str, str]] = [
-        (None, "Subj", "S <s@s.com>", "https://i.nl/1"),
+    jobs: list[tuple[int | None, str, str, str, str | None]] = [
+        (None, "Subj", "S <s@s.com>", "https://i.nl/1", None),
     ]
     session = PageCaptureSession.create(jobs)
     driver = MagicMock()
@@ -192,3 +191,98 @@ def test_record_snapshot_writes_html_and_manifest(
     vis_name = snap["files"]["visible_text"]
     assert (session.session_dir / html_name).read_text(encoding="utf-8").startswith("<html>")
     assert "Unsubscribe from all lists" in (session.session_dir / vis_name).read_text(encoding="utf-8")
+
+
+def test_strip_png_artifacts_removes_files_and_manifest_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("UNSUBSCRIBE_PAGE_CAPTURE_SCREENSHOTS", raising=False)
+    monkeypatch.setattr(
+        unsubscribe_page_capture,
+        "page_capture_base_dir",
+        lambda: tmp_path,
+    )
+    jobs: list[tuple[int | None, str, str, str, str | None]] = [
+        (1, "S", "snd", "https://x.example/u", None),
+    ]
+    session = PageCaptureSession.create(jobs)
+    png = session.session_dir / "001_job1_test.png"
+    png.write_bytes(b"x")
+    man = {
+        "schema_version": 1,
+        "snapshots": [
+            {
+                "files": {"html": "a.html", "visible_text": "a.visible.txt", "png": "001_job1_test.png"},
+            }
+        ],
+    }
+    (session.session_dir / "manifest.json").write_text(
+        json.dumps(man, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    session.strip_png_artifacts_if_disabled()
+    assert not png.exists()
+    data = json.loads((session.session_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert "png" not in data["snapshots"][0]["files"]
+
+
+def test_path_to_final_html_for_job_picks_latest_sequence(tmp_path: Path) -> None:
+    d = tmp_path / "s1"
+    d.mkdir()
+    (d / "a.html").write_text("<html>old</html>", encoding="utf-8")
+    (d / "b.html").write_text("<html>new</html>", encoding="utf-8")
+    man = {
+        "schema_version": 1,
+        "snapshots": [
+            {"sequence": 1, "job_batch_index": 2, "files": {"html": "a.html"}},
+            {"sequence": 3, "job_batch_index": 2, "files": {"html": "b.html"}},
+        ],
+    }
+    (d / "manifest.json").write_text(json.dumps(man), encoding="utf-8")
+    session = PageCaptureSession.__new__(PageCaptureSession)
+    session.session_dir = d
+    p = session.path_to_final_html_for_job(2)
+    assert p is not None
+    assert p.name == "b.html"
+
+
+def test_cleanup_all_page_capture_png_sessions_if_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("UNSUBSCRIBE_PAGE_CAPTURE_SCREENSHOTS", raising=False)
+    monkeypatch.setattr(
+        unsubscribe_page_capture,
+        "page_capture_base_dir",
+        lambda: tmp_path,
+    )
+    s1 = tmp_path / "session_one"
+    s2 = tmp_path / "session_two"
+    s1.mkdir()
+    s2.mkdir()
+    (s1 / "x.png").write_bytes(b"1")
+    (s2 / "y.png").write_bytes(b"2")
+    n = unsubscribe_page_capture.cleanup_all_page_capture_png_sessions_if_disabled()
+    assert n == 2
+    assert not (s1 / "x.png").exists()
+    assert not (s2 / "y.png").exists()
+
+
+def test_cleanup_all_page_capture_png_skips_when_screenshots_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UNSUBSCRIBE_PAGE_CAPTURE_SCREENSHOTS", "1")
+    monkeypatch.setattr(
+        unsubscribe_page_capture,
+        "page_capture_base_dir",
+        lambda: tmp_path,
+    )
+    s1 = tmp_path / "session_a"
+    s1.mkdir()
+    png = s1 / "keep.png"
+    png.write_bytes(b"x")
+    n = unsubscribe_page_capture.cleanup_all_page_capture_png_sessions_if_disabled()
+    assert n == 0
+    assert png.exists()

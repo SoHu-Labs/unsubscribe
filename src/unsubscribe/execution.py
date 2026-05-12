@@ -49,6 +49,23 @@ def _one_click_http_code(out: str) -> str:
     return m.group(1) if m else "?"
 
 
+# HTTP 202 Accepted: request recorded but processing is incomplete from the client's perspective.
+# Many ESPs return 202 while the visible unsubscribe still requires a GET (browser) or a vendor page.
+_ONE_CLICK_CODES_NEED_BROWSER_FOLLOWUP = frozenset({"202"})
+
+
+def _one_click_needs_browser_followup(one_click_message: str) -> bool:
+    code = _one_click_http_code(one_click_message)
+    return code in _ONE_CLICK_CODES_NEED_BROWSER_FOLLOWUP
+
+
+def _append_browser_detail_preamble(preamble: str | None, detail: str) -> str:
+    p = (preamble or "").strip()
+    if not p:
+        return detail
+    return f"{p} Then: {detail}"
+
+
 def print_unsubscribe_report(results: list[dict[str, Any]]) -> None:
     """Truthful per-email report: never equate POST 2xx with completed unsubscribe."""
     print("\n  ── Results ──\n")
@@ -98,7 +115,14 @@ def print_unsubscribe_report(results: list[dict[str, Any]]) -> None:
     if n_fail:
         parts.append(f"{n_fail} failed")
     summary = ", ".join(parts) if parts else "no attempts"
-    print(f"   ── {n} attempted: {summary} ──\n")
+    print(f"   ── {n} attempted: {summary} ──")
+    if any(r.get("method") == "browser" for r in results):
+        print(
+            "   Browser URLs: confirmed vs. no-confirmation follows saved capture HTML "
+            "(latest snapshot per job), not the live tab alone.\n"
+        )
+    else:
+        print()
 
 
 def debugger_address_from_env() -> str | None:
@@ -108,7 +132,7 @@ def debugger_address_from_env() -> str | None:
 
 
 def subscriber_email_for_browser_from_env() -> str | None:
-    """Optional email for preference-center forms (``UnsubscribeFlowCase.EMAIL_FIELD_THEN_CLICK``)."""
+    """When set, overrides per-message ``delivered_to`` for ``type=email`` form prefills."""
     raw = (os.environ.get("UNSUBSCRIBE_SUBSCRIBER_EMAIL") or "").strip()
     return raw or None
 
@@ -127,13 +151,20 @@ def run_automated_unsubscribe(
     debugger_address: str | None,
     timeout_per_url_s: float = 30,
     verbose: bool = True,
+    mirror_failure_trace: bool = True,
 ) -> list[dict[str, Any]]:
     """
     For each selected message: RFC 8058 one-click first, then allowlisted body link + browser.
 
     ``selected`` is ``(walkthrough_index | None, message)`` — use ``None`` for re-check picks.
 
+    One-click **HTTP 202** is treated as incomplete: the run still resolves an unsubscribe URL
+    (body or ``List-Unsubscribe`` GET) and queues the browser pass when possible.
+
     Returns one **truthful** result dict per message (POST 2xx ⇒ ``server-acknowledged``, not unsubscribed).
+
+    ``mirror_failure_trace`` (default ``True``) is passed to :func:`batch_browser_unsubscribe` for
+    optional Downloads mirrors on browser failures.
     """
     nsel = len(selected)
     if nsel == 0:
@@ -142,6 +173,7 @@ def run_automated_unsubscribe(
     t0 = time.monotonic()
     results: list[dict[str, Any] | None] = [None] * nsel
     browser_jobs: list[tuple[int, BrowserUnsubscribeJob]] = []
+    browser_one_click_preamble: dict[int, str] = {}
 
     if verbose:
         print("", flush=True)
@@ -154,21 +186,33 @@ def run_automated_unsubscribe(
             out = try_one_click_unsubscribe(headers)
             if out.startswith("One-Click unsubscribe accepted"):
                 code = _one_click_http_code(out)
-                results[pos] = _result_row(
-                    email_index,
-                    m,
-                    method="one-click",
-                    status="server-acknowledged",
-                    detail=out.strip(),
-                )
-                if verbose:
-                    sq = _subject_preview(m.subject)
-                    print(
-                        f"    [{pos + 1}/{nsel}] {m.from_} — \"{sq}\" — "
-                        f"one-click POST accepted (HTTP {code}); not the same as finished unsubscribe.",
-                        flush=True,
+                if _one_click_needs_browser_followup(out):
+                    browser_one_click_preamble[pos] = out.strip()
+                    if verbose:
+                        sq = _subject_preview(m.subject)
+                        print(
+                            f"    [{pos + 1}/{nsel}] {m.from_} — \"{sq}\" — "
+                            f"one-click POST returned HTTP {code}; "
+                            "continuing with browser if an unsubscribe URL is available.",
+                            flush=True,
+                        )
+                else:
+                    results[pos] = _result_row(
+                        email_index,
+                        m,
+                        method="one-click",
+                        status="server-acknowledged",
+                        detail=out.strip(),
                     )
-                continue
+                    if verbose:
+                        sq = _subject_preview(m.subject)
+                        print(
+                            f"    [{pos + 1}/{nsel}] {m.from_} — \"{sq}\" — "
+                            f"one-click POST accepted (HTTP {code}); not the same as "
+                            "finished unsubscribe.",
+                            flush=True,
+                        )
+                    continue
             low = out.lower()
             if low.startswith("manual action"):
                 mailto_hint = out[:300]
@@ -205,24 +249,22 @@ def run_automated_unsubscribe(
                 detail = mailto_hint
                 if extract_err:
                     detail = f"{mailto_hint} Body: {extract_err}"
-                results[pos] = _result_row(
-                    email_index,
-                    m,
-                    method="none",
-                    status="failed",
-                    detail=f"mailto / manual only — {detail[:280]}",
-                )
+                detail = f"mailto / manual only — {detail[:280]}"
             else:
-                results[pos] = _result_row(
-                    email_index,
-                    m,
-                    method="none",
-                    status="failed",
-                    detail=(
-                        extract_err
-                        or "No unsubscribe URL from message body or List-Unsubscribe header."
-                    ),
+                detail = (
+                    extract_err
+                    or "No unsubscribe URL from message body or List-Unsubscribe header."
                 )
+            detail = _append_browser_detail_preamble(
+                browser_one_click_preamble.get(pos), detail
+            )
+            results[pos] = _result_row(
+                email_index,
+                m,
+                method="none",
+                status="failed",
+                detail=detail,
+            )
             if verbose:
                 sq = _subject_preview(m.subject)
                 tag = "mailto / manual" if mailto_hint else "no automated path"
@@ -232,7 +274,13 @@ def run_automated_unsubscribe(
                 )
             continue
 
-        job: BrowserUnsubscribeJob = (email_index, m.subject, m.from_, body_url)
+        job: BrowserUnsubscribeJob = (
+            email_index,
+            m.subject,
+            m.from_,
+            body_url,
+            m.delivered_to,
+        )
         browser_jobs.append((pos, job))
         if verbose:
             host = urlparse(body_url).hostname or body_url[:48]
@@ -295,17 +343,21 @@ def run_automated_unsubscribe(
 
     if not debugger_address:
         for pos, job in browser_jobs:
-            _email_index, _sj, _snd, url = job
+            _email_index, _sj, _snd, url, _hint = job
             m = selected[pos][1]
+            fail_detail = (
+                "browser → ✗ not run: set GOOGLEADS_BROWSER_DEBUGGER_ADDRESS and start Brave "
+                f"with --remote-debugging-port. URL was: {url[:120]}"
+            )
+            fail_detail = _append_browser_detail_preamble(
+                browser_one_click_preamble.get(pos), fail_detail
+            )
             results[pos] = _result_row(
                 selected[pos][0],
                 m,
                 method="browser",
                 status="failed",
-                detail=(
-                    "browser → ✗ not run: set GOOGLEADS_BROWSER_DEBUGGER_ADDRESS and start Brave "
-                    f"with --remote-debugging-port. URL was: {url[:120]}"
-                ),
+                detail=fail_detail,
             )
         tr.step(
             f"Browser automation skipped ({nb} URL(s)); Brave was not contacted."
@@ -318,9 +370,15 @@ def run_automated_unsubscribe(
             timeout_per_url_s=timeout_per_url_s,
             subscriber_email=subscriber_email_for_browser_from_env(),
             progress=tr,
+            mirror_failure_trace=mirror_failure_trace,
         )
         for (pos, _job), row in zip(browser_jobs, batch_rows, strict=True):
-            results[pos] = row
+            out_row = dict(row)
+            out_row["detail"] = _append_browser_detail_preamble(
+                browser_one_click_preamble.get(pos),
+                str(out_row.get("detail", "")),
+            )
+            results[pos] = out_row
 
     assert all(x is not None for x in results)
     return cast(list[dict[str, Any]], results)

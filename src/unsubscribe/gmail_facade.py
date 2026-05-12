@@ -18,6 +18,8 @@ class GmailHeaderSummary:
     snippet: str
     list_unsubscribe: str | None
     list_unsubscribe_post: str | None
+    #: Mailbox that received the message (``Delivered-To`` / ``To``), for form prefills.
+    delivered_to: str | None = None
 
 
 def headers_from_summary(m: GmailHeaderSummary) -> dict[str, str]:

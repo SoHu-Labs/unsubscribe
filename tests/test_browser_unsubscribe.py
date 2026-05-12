@@ -47,8 +47,10 @@ def test_find_unsubscribe_prefers_visible() -> None:
     assert el is visible
 
 
-def _job(idx: int | None, url: str) -> tuple[int | None, str, str, str]:
-    return (idx, "Subj", "A <a@a.com>", url)
+def _job(
+    idx: int | None, url: str, delivered: str | None = None
+) -> tuple[int | None, str, str, str, str | None]:
+    return (idx, "Subj", "A <a@a.com>", url, delivered)
 
 
 def test_batch_attach_once_get_each_url_quit_once() -> None:
@@ -115,8 +117,7 @@ def test_batch_failure_on_one_url_continues_and_quits_once() -> None:
             side_effect=_try,
         ),
         patch(
-            "unsubscribe.browser_unsubscribe.save_live_brave_trace",
-            return_value=(MagicMock(), MagicMock()),
+            "unsubscribe.browser_unsubscribe.save_live_brave_failure_trace",
         ) as mock_trace,
         patch(
             "unsubscribe.browser_unsubscribe._page_suggests_unsubscribed_confirmed",
@@ -328,6 +329,69 @@ def test_try_click_second_unsubscribe_round_when_not_confirmed() -> None:
                         ):
                             _try_click_unsubscribe_on_page(driver, settle_s=0.01)
     assert n["click"] == 2
+
+
+def test_find_unsubscribe_finds_submit_input_via_script() -> None:
+    """Sites such as Wizz Air use ``input[type=submit]`` with value ``Unsubscribe`` (no link text)."""
+    driver = MagicMock()
+    driver.find_elements.return_value = []
+    submit = _visible_el()
+    driver.execute_script.return_value = submit
+    el = _find_unsubscribe_element(driver)
+    assert el is submit
+
+
+def test_batch_uses_job_mailbox_hint_when_env_absent() -> None:
+    mock_driver = MagicMock()
+    mock_driver.window_handles = ["main"]
+    jobs = [(1, "S", "snd", "https://wizz.example/u", "hint@mailbox.test")]
+    with (
+        patch(
+            "unsubscribe.browser_unsubscribe.chrome_driver_attach",
+            return_value=mock_driver,
+        ),
+        patch(
+            "unsubscribe.browser_unsubscribe._try_click_unsubscribe_on_page",
+        ) as mock_try,
+        patch(
+            "unsubscribe.browser_unsubscribe._page_suggests_unsubscribed_confirmed",
+            return_value=True,
+        ),
+    ):
+        batch_browser_unsubscribe(
+            jobs,
+            debugger_address="127.0.0.1:9222",
+            timeout_per_url_s=10,
+            quiet=True,
+        )
+    assert mock_try.call_args.kwargs.get("subscriber_email") == "hint@mailbox.test"
+
+
+def test_batch_prefers_env_subscriber_over_job_mailbox_hint() -> None:
+    mock_driver = MagicMock()
+    mock_driver.window_handles = ["main"]
+    jobs = [(1, "S", "snd", "https://wizz.example/u", "hint@mailbox.test")]
+    with (
+        patch(
+            "unsubscribe.browser_unsubscribe.chrome_driver_attach",
+            return_value=mock_driver,
+        ),
+        patch(
+            "unsubscribe.browser_unsubscribe._try_click_unsubscribe_on_page",
+        ) as mock_try,
+        patch(
+            "unsubscribe.browser_unsubscribe._page_suggests_unsubscribed_confirmed",
+            return_value=True,
+        ),
+    ):
+        batch_browser_unsubscribe(
+            jobs,
+            debugger_address="127.0.0.1:9222",
+            timeout_per_url_s=10,
+            quiet=True,
+            subscriber_email="env-wins@example.org",
+        )
+    assert mock_try.call_args.kwargs.get("subscriber_email") == "env-wins@example.org"
 
 
 def test_batch_forwards_subscriber_email_to_page_handler() -> None:

@@ -1,0 +1,27 @@
+# AI topic — founder/researcher lens
+# TODO: Replace placeholder senders with actual newsletter/research sources
+
+name: ai
+display_name: "AI Trends — week of {date}"
+senders:
+  - "TODO-your-ai-newsletter@example.com"
+folders:
+  - "INBOX"
+window_days: 7
+extract_model: fast
+synthesize_model: smart
+persona_prompt: |
+  You are summarizing for Chaehan, a working AI founder (Virtual Friend, Delaware
+  C-corp) with 4+ years of published AI research. Skip introductory framing.
+  Assume he knows transformer architecture, RLHF, agent loops, evaluation methods.
+  Prioritize: (1) local LLM developments and benchmarks, (2) voice AI advances,
+  (3) companies and business areas with stock-investment implications,
+  (4) genuine research surprises. Quote specific numbers, model names, dates.
+  Skip "hot takes" without empirical content. Do not pad.
+trending:
+  min_cluster_size: 2
+  similarity_threshold: 0.62
+  algorithm: hdbscan
+output:
+  template: digest_html
+  also_email_to: "self"
