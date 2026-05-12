@@ -120,59 +120,84 @@ def _digest_run(ns: argparse.Namespace) -> int:
             return 2
 
     if ns.all:
-        backend = GmailApiBackend.from_env()
-        facade = GmailFacade(backend)
-        results: list[dict[str, Any]] = []
+        # Ordered plan: config/strict outcomes first; load Gmail only if at least one
+        # topic reaches run_digest (cron-friendly when all YAML fail or dir is empty).
+        actions: list[tuple[object, ...]] = []
         any_failed = False
+        _ERR, _RUN = object(), object()
+
         for path in sorted(topics_dir.glob("*.yaml")):
             try:
                 cfg = load_topic_config(path)
             except (OSError, KeyError, ValueError, TypeError, yaml.YAMLError) as e:
                 any_failed = True
-                results.append(
-                    _digest_run_error_payload(
-                        topic=path.stem,
-                        file=path.name,
-                        error=f"config: {e}",
+                actions.append(
+                    (
+                        _ERR,
+                        _digest_run_error_payload(
+                            topic=path.stem,
+                            file=path.name,
+                            error=f"config: {e}",
+                        ),
                     )
                 )
                 continue
             if ns.strict and cfg.name != path.stem:
                 any_failed = True
-                results.append(
-                    _digest_run_error_payload(
-                        topic=path.stem,
-                        file=path.name,
-                        error=(
-                            f"strict: YAML name {cfg.name!r} must match file stem {path.stem!r} "
-                            "(rename the file or change ``name:``)."
+                actions.append(
+                    (
+                        _ERR,
+                        _digest_run_error_payload(
+                            topic=path.stem,
+                            file=path.name,
+                            error=(
+                                f"strict: YAML name {cfg.name!r} must match file stem {path.stem!r} "
+                                "(rename the file or change ``name:``)."
+                            ),
                         ),
                     )
                 )
                 continue
-            try:
-                results.append(
-                    run_digest(
-                        cfg,
-                        facade=facade,
-                        keep_list_path=ns.keep_list,
-                        max_results=ns.max_results,
-                        since=since,
-                        cache_db=ns.cache_db,
-                        dry_run=ns.dry_run,
-                        output_dir=ns.output_dir,
-                        template_dir=ns.template_dir,
+            actions.append((_RUN, cfg, path))
+
+        need_gmail = any(tag is _RUN for tag, *_ in actions)
+        results: list[dict[str, Any]] = []
+        if need_gmail:
+            backend = GmailApiBackend.from_env()
+            facade = GmailFacade(backend)
+            for item in actions:
+                tag = item[0]
+                if tag is _ERR:
+                    results.append(item[1])
+                    continue
+                _, cfg, path = item
+                try:
+                    results.append(
+                        run_digest(
+                            cfg,
+                            facade=facade,
+                            keep_list_path=ns.keep_list,
+                            max_results=ns.max_results,
+                            since=since,
+                            cache_db=ns.cache_db,
+                            dry_run=ns.dry_run,
+                            output_dir=ns.output_dir,
+                            template_dir=ns.template_dir,
+                        )
                     )
-                )
-            except Exception as e:
-                any_failed = True
-                results.append(
-                    _digest_run_error_payload(
-                        topic=cfg.name,
-                        file=path.name,
-                        error=str(e),
+                except Exception as e:
+                    any_failed = True
+                    results.append(
+                        _digest_run_error_payload(
+                            topic=cfg.name,
+                            file=path.name,
+                            error=str(e),
+                        )
                     )
-                )
+        else:
+            for item in actions:
+                results.append(item[1])
+
         print(json.dumps(results, indent=2))
         return 1 if any_failed else 0
 

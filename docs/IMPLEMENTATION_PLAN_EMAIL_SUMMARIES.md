@@ -162,15 +162,68 @@ Send the rendered HTML with `users.messages.send` using the same OAuth token as 
 
 ---
 
+## Plan status (scope outside individual slices)
+
+| Area | Status | Notes |
+|------|--------|--------|
+| M2–M4 (digest engine, cache, synthesis, HTML) | **Shipped** in repo | Older plan sections are narrative; no separate contract blocks retrofitted unless we reopen a milestone. |
+| M5 (cron, CLI polish, cost dashboard) | **Shipped** — see **Slice: M5** below | Acceptance is the contract of record. |
+| **STILL OPEN** (below) | Product / env verification | Not blocking M5 merge; tracked as follow-ups in M5 slice. |
+
+---
+
 ## M5: Cron, polish, cost dashboard
 
-- **`digest version`** / **`python -m email_digest --version`** — print installed wheel version (distribution name ``unsubscribe`` from ``pyproject.toml``).
-- **`digest cost --json`** — machine-readable LLM usage summary (`cache_missing`, token totals, `cost_usd`, **`by_alias`** and **`by_model`** breakdowns) for scripts and cron.
-- **`digest topics`** — list / validate `topics/*.yaml` (tab-separated or `--json`); **`--strict`** requires YAML ``name`` to match the file stem (CI), exit **1** on mismatch.
-- **`digest run … --strict`** — same stem rule for **`digest run <topic>`** and **`digest run --all`**; JSON error + exit **1** on mismatch; single-topic mismatch does not initialize Gmail.
-- **`digest run --all`** — runs every topic; JSON array mixes normal pipeline objects with `{ "topic", "file", "error" }` on failure; **exit 1** if any topic failed (cron-friendly).
-- **Per-message failures** — during collect/extract, one bad message does not abort the topic run; errors append to **`output/_failures/<YYYY-MM-DD>.log`** (tab-separated). Same tree when using **`--output-dir`**. See README CLI section.
-- **Cron** — typical pattern: `cd <repo> && mamba run -n email-digest python -m email_digest digest run ai` on a schedule; ensure `GOOGLE_OAUTH_TOKEN` (and LLM keys) are available in that environment. Copy **`scripts/digest-cron.example.sh`** as a starting wrapper (`DIGEST_REPO`, `GOOGLE_OAUTH_TOKEN`, optional `UNSUBSCRIBE_KEEP` / `DIGEST_CACHE_DB`).
+### Slice: M5 — Cron, polish, cost dashboard
+
+- **Goal:** Operators can run digests on a schedule with predictable exit codes, machine-readable cost usage, validated topic YAMLs, and resilient per-message error logging—without loading Gmail OAuth when no topic work will run.
+
+- **Non-goals:** Changing LLM models, Spark URL scheme, unsubscribe behavior, default topic YAML content, or widening Gmail query semantics. No live Gmail or live LLM calls in the default CI test suite.
+
+- **Invariants:**
+  - `python -m email_digest --version` and `python -m email_digest digest version` print the installed **`unsubscribe`** distribution version from `pyproject.toml` (exit **0**).
+  - `digest cost` and `digest cost --json` exit **0** even when the cache file is missing; JSON includes `cache_missing`, `days`, `cache_db`, aggregate `calls` / `input_tokens` / `output_tokens` / `cost_usd`, plus **`by_alias`** and **`by_model`** arrays (same shapes as `email_digest.cache.cost_report_payload`).
+  - `digest topics` exits **0** on success, **1** on invalid YAML or `--strict` stem mismatch, **2** if `--topics-dir` is missing or not a directory. `--json` emits a JSON array of `{ name, file, display_name }`; text mode prints tab-separated `name` and `display_name` per line.
+  - `digest run <topic>`: success prints one JSON object and exits **0**; missing/invalid YAML, `--strict` stem mismatch, or pipeline exception prints `{ "topic", "file", "error" }` and exits **1**; malformed `--since` exits **2** with stderr. **Single-topic** config/strict failures MUST NOT call `GmailApiBackend.from_env`.
+  - `digest run --all`: prints a JSON array in **sorted `*.yaml` filename order**; elements are either normal pipeline dicts or `{ "topic", "file", "error" }`; exit **1** if any topic failed, **0** if none failed. **Gmail OAuth MUST NOT load** when there is no topic that reaches `run_digest` (empty topics dir, all config failures, or all `--strict` stem mismatches).
+  - Per-message collect/extract failures append one line to `<output_dir>/_failures/<YYYY-MM-DD>.log` (fields tab-separated: UTC timestamp, topic, Gmail message id, exception type, message); the topic run continues.
+
+- **Coupling:** `src/email_digest/cli.py`, `src/email_digest/cache.py`, `src/email_digest/pipeline.py`, `scripts/digest-cron.example.sh`, `README.md` (CLI / cron section), `tests/test_digest_cli.py`, `tests/test_digest_pipeline.py`, `tests/test_cache.py` (if cost payload shape changes).
+
+- **Preconditions:** Branch with M4 pipeline merged; env **`email-digest`** (`mamba`); `pip install -e ".[dev]"` from repo root. Secrets: **`GOOGLE_OAUTH_TOKEN`** (path), optional **`DEEPSEEK_API_KEY`**, **`DIGEST_CACHE_DB`** — names only.
+
+- **Permissions & environment:**
+
+| Class | Rule |
+|--------|------|
+| **Network** | MUST NOT require live Gmail or LLM in CI; tests use mocks / tmp SQLite / tmp dirs. |
+| **Filesystem** | MAY write under `tmp_path`, `tests/`, `cache/`, `output/` in tests; example cron script documents repo paths. |
+| **Git** | No `Co-authored-by` or `--trailer`; if hooks inject trailers, commit with empty `core.hooksPath` for that invocation. |
+| **Shell** | Acceptance uses `mamba run -n email-digest python -m pytest tests/ -q` from repo root. |
+| **Credentials** | No token values in repo or plan. |
+
+- **Caveats & footguns:**
+  1. **Symptom:** Cron job touches OAuth even when every topic failed at YAML load. **Cause:** `digest run --all` called `from_env` before the per-file loop. **Wrong fix:** skip OAuth only in tests. **Right fix:** build an ordered action list (error vs run); call `from_env` only if at least one `run` action exists (see `cli._digest_run`).
+  2. **Symptom:** `digest cost --json` consumers break. **Cause:** Renaming or dropping keys in `cost_report_payload`. **Wrong fix:** partial JSON tests. **Right fix:** extend `tests/test_digest_cli.py` (and `test_cache.py` if needed) whenever the payload contract changes.
+  3. **Symptom:** Strict mismatch still hits Gmail. **Cause:** `from_env` ordered before strict check on single-topic path. **Wrong fix:** assert in docs only. **Right fix:** keep config + strict validation before `from_env` for single-topic; tests assert `from_env` not called.
+  4. **Symptom:** Failure log not found. **Cause:** `_failures` uses `output_dir` default vs override. **Wrong fix:** hard-code `output/`. **Right fix:** pass `output_dir` through CLI to `run_digest` consistently; test uses `tmp_path`.
+
+- **Procedure:**
+  1. Ensure `digest version` / `--version`, `digest cost [--json]`, `digest topics [--json|--strict]`, `digest run` / `--all` / `--strict`, per-message `_failures` logging, and `scripts/digest-cron.example.sh` match **Invariants** above.
+  2. For `digest run --all`, implement ordered two-phase handling so Gmail loads only when at least one `run_digest` is required; preserve JSON array order.
+  3. Add or adjust tests for Gmail skip on `--all` with zero runnable topics and for empty topics dir (`from_env` not called).
+  4. Align README CLI/cron copy with behavior.
+  5. Run full fast test suite.
+
+- **Acceptance:** From repo root, `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+
+- **Follow-ups:**
+
+| ID | Item | Type | Blocker for next slice? |
+|----|------|------|-------------------------|
+| F1 | LM Studio model id alignment (`LM_STUDIO_MODEL` / `LM_STUDIO_MODEL_SMART`) | env / docs | no |
+| F2 | On-device verification of Spark `readdle-spark://` scheme | manual | no |
+| F3 | Sender allowlist UX (`~/.unsubscribe_keep.json`) | product | no |
 
 ---
 

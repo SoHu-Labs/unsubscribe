@@ -520,7 +520,7 @@ def test_digest_run_all_empty_topics_dir_returns_0(
     keep = tmp_path / "keep.json"
     keep.write_text("{}", encoding="utf-8")
     with (
-        patch("email_digest.cli.GmailApiBackend.from_env", return_value=MagicMock()),
+        patch("email_digest.cli.GmailApiBackend.from_env") as from_env,
         patch("email_digest.cli.GmailFacade", return_value=MagicMock()),
     ):
         rc = main(
@@ -539,6 +539,110 @@ def test_digest_run_all_empty_topics_dir_returns_0(
         )
     assert rc == 0
     assert json.loads(capsys.readouterr().out) == []
+    from_env.assert_not_called()
+
+
+def test_digest_run_all_only_config_errors_skips_gmail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """M5: no OAuth when every topic fails before run_digest (cron-friendly)."""
+    from email_digest.cli import main
+
+    td = tmp_path / "topics_all_bad"
+    td.mkdir()
+    (td / "x.yaml").write_text("name: only\n", encoding="utf-8")
+    (td / "y.yaml").write_text("garbage: [\n", encoding="utf-8")
+    keep = tmp_path / "keep.json"
+    keep.write_text("{}", encoding="utf-8")
+    with (
+        patch("email_digest.cli.GmailApiBackend.from_env") as from_env,
+        patch("email_digest.cli.GmailFacade", return_value=MagicMock()),
+        patch("email_digest.cli.run_digest") as run_m,
+    ):
+        rc = main(
+            [
+                "digest",
+                "run",
+                "--all",
+                "--dry-run",
+                "--topics-dir",
+                str(td),
+                "--keep-list",
+                str(keep),
+                "--cache-db",
+                str(tmp_path / "allbad.sqlite"),
+            ]
+        )
+    assert rc == 1
+    from_env.assert_not_called()
+    run_m.assert_not_called()
+    out = json.loads(capsys.readouterr().out)
+    assert len(out) == 2
+    assert all("error" in item for item in out)
+
+
+def test_digest_run_all_only_strict_errors_skips_gmail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+
+    td = tmp_path / "topics_strict_only"
+    td.mkdir()
+    (td / "a.yaml").write_text(
+        """
+name: wrong_a
+display_name: "A"
+senders: ["digest@news.com"]
+window_days: 7
+extract_model: fast
+synthesize_model: smart
+persona_prompt: "p"
+""",
+        encoding="utf-8",
+    )
+    (td / "b.yaml").write_text(
+        """
+name: wrong_b
+display_name: "B"
+senders: ["digest@news.com"]
+window_days: 7
+extract_model: fast
+synthesize_model: smart
+persona_prompt: "p"
+""",
+        encoding="utf-8",
+    )
+    keep = tmp_path / "keep.json"
+    keep.write_text(
+        json.dumps({"digest@news.com": {"subject": "x", "date_kept": "2026-01-01"}}),
+        encoding="utf-8",
+    )
+    with (
+        patch("email_digest.cli.GmailApiBackend.from_env") as from_env,
+        patch("email_digest.cli.GmailFacade", return_value=MagicMock()),
+        patch("email_digest.cli.run_digest") as run_m,
+    ):
+        rc = main(
+            [
+                "digest",
+                "run",
+                "--all",
+                "--strict",
+                "--dry-run",
+                "--topics-dir",
+                str(td),
+                "--keep-list",
+                str(keep),
+                "--cache-db",
+                str(tmp_path / "stonly.sqlite"),
+            ]
+        )
+    assert rc == 1
+    from_env.assert_not_called()
+    run_m.assert_not_called()
+    out = json.loads(capsys.readouterr().out)
+    assert len(out) == 2
+    assert all("strict:" in item["error"] for item in out)
 
 
 def test_digest_run_no_topic_skips_gmail_init() -> None:
