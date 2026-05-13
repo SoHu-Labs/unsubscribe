@@ -62,7 +62,12 @@ def test_dry_run_filters_by_keep_list(tmp_path: Path) -> None:
             "A",
             list_unsubscribe="<https://vendor.example/unsub>",
         ),
-        _summary("2", "Other <other@x.com>", "B"),
+        _summary(
+            "2",
+            "Digest <digest@news.com>",
+            "B",
+            list_unsubscribe="<https://vendor.example/unsub>",
+        ),
     ]
     facade.get_message_html.return_value = "<html><body>Hi</body></html>"
 
@@ -78,8 +83,9 @@ def test_dry_run_filters_by_keep_list(tmp_path: Path) -> None:
         )
 
     assert out["topic"] == "ai"
-    assert len(out["messages"]) == 1
+    assert len(out["messages"]) == 2
     assert out["messages"][0]["id"] == "1"
+    assert out["messages"][1]["id"] == "2"
     assert out["messages"][0]["digest_source_candidate"] is True
     assert out["messages"][0]["extraction"] == json.loads(fake_extract)
     assert out["trending"] == []
@@ -230,11 +236,17 @@ def test_trending_clusters_with_stubbed_embed_and_cluster(tmp_path: Path) -> Non
             "A",
             list_unsubscribe="<https://vendor.example/unsub>",
         ),
+        _summary(
+            "2",
+            "Digest <digest@news.com>",
+            "B",
+            list_unsubscribe="<https://vendor.example/unsub>",
+        ),
     ]
     facade.get_message_html.return_value = "<p>x</p>"
     fake_extract = json.dumps(
         {
-            "key_claims": ["claim a", "claim b", "claim c", "claim d"],
+            "key_claims": ["claim a", "claim b"],
             "entities": [],
             "numbers": [],
         }

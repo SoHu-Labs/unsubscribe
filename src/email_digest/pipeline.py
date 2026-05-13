@@ -81,6 +81,9 @@ def _compute_trending(
                 )
     if len(claims) < cfg.trending_min_cluster_size:
         return []
+    sources = {c["message_id"] for c in claims}
+    if len(sources) < cfg.trending_min_cluster_size:
+        return []
 
     from email_digest.cluster import (
         cluster_labels,
