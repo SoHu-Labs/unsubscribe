@@ -491,3 +491,34 @@ def test_walkthrough_cli_all_invalid_since(
     assert rc == 2
     from_env.assert_not_called()
     assert "Invalid --since" in capsys.readouterr().err
+
+
+def test_walkthrough_shortlist_shown_before_prompts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    td = tmp_path / "tw_sl"
+    td.mkdir()
+    p = td / "solo.yaml"
+    p.write_text(_topic_yaml(name="solo"), encoding="utf-8")
+    cfg = load_topic_config(p)
+    keep = tmp_path / "k.json"
+    keep.write_text("{}", encoding="utf-8")
+    facade = MagicMock()
+    facade.list_messages.return_value = [
+        _newsletter_summary(id_="a", from_="A <a@x.com>", subject="Alpha"),
+        _newsletter_summary(id_="b", from_="B <b@y.com>", subject="Beta"),
+    ]
+
+    inputs = iter(["q"])
+
+    def _inp(_: str) -> str:
+        return next(inputs)
+
+    rc = run_digest_walkthrough(
+        cfg, p, facade, keep, since=None, max_results=50, input_fn=_inp
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "2 candidate(s)" in out
+    assert "1. A <a@x.com>" in out
+    assert "2. B <b@y.com>" in out

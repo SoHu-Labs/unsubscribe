@@ -122,6 +122,13 @@ def run_digest_walkthrough(
         return 0
 
     print(f"\n{len(filtered)} candidate(s).", flush=True)
+    for i, m in enumerate(filtered, start=1):
+        snip = (m.snippet or "").replace("\n", " ").strip()[:100]
+        if snip:
+            print(f"  {i}. {m.from_} : {m.subject!r} :: {snip}", flush=True)
+        else:
+            print(f"  {i}. {m.from_} : {m.subject!r}", flush=True)
+    print(flush=True)
 
     body_pool: ThreadPoolExecutor | None = None
     body_futures: dict[str, Future[str]] = {}

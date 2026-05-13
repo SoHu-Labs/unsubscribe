@@ -26,6 +26,7 @@ This section is the **continuity contract** for any implementer (human or LLM): 
 | **R4** | **`digest walkthrough <topic>`** — terminal step-through of digest-source candidates only; **[Enter]** → **`add_to_keep_list`**; **[s]** skip; **[q]** quit; exit **130** on interrupt (same spirit as **`unsubscribe check`**). No HTML body prefetch (optional **R4+** follow-up). |
 | **R4+** | **`digest walkthrough --body`** — parallel plain-text body prefetch (**ThreadPoolExecutor**, same pattern as **`unsubscribe check`**); body preview shown per message; no body fetch when flag omitted; kept senders excluded from prefetch |
 | **R4++** | **`digest walkthrough --all`** — multi-topic walkthrough in sorted YAML filename order; two-phase scan + deferred Gmail (same pattern as `run --all` / `candidates --all`); config/strict errors printed to stderr, walkthrough continues to next topic; exit **1** if any topic failed, **130** on interrupt |
+| **R4+++** | **Walkthrough shortlist** — numbered one-line summaries (`From : Subject :: snippet`) printed before the per-message loop, giving an overview of all candidates at a glance  |
 | **R6** | **`topics/*.yaml`** — removed **`TODO-`** sender placeholders; RFC2606 **`example.com`** newsletter-shaped addresses + multi-sender examples; CI guard: no **`todo-`** in any topic **`senders`** list |
 | **R7** | **`cheap` alias for MiniMax via OpenCode Go** — env-var-configurable model (`CHEAP_MODEL`, default `openai/minimax-m2.5`), base URL (`CHEAP_API_BASE`, default `https://opencode.ai/zen/go/v1`), API key (`CHEAP_API_KEY` or auto-read from OpenCode `opencode-go` block in `~/.local/share/opencode/auth.json`); injects `api_base`/`api_key` for litellm OpenAI-compatible endpoint; `resolve_model_alias` returns the active model string |
 | **E** | `digest candidates` adds `sender_key`, `keep_list_kept`, `--keep-list` (parity with `digest run` gate) |
@@ -448,7 +449,7 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 | ID | Item | Type | Blocker? |
 |----|------|------|----------|
 | R4++ | **`digest walkthrough --all`** (multi-topic) → **Slice R4++** | feature | no |
-| R4+++ | Snippet-based one-line summary in shortlist (before per-message walkthrough) | UX | no |
+| R4+++ | ~~Snippet-based one-line summary in shortlist (before per-message walkthrough)~~ → **Shipped** | UX | no |
 
 ### Slice: R4++ — Walkthrough `--all` (multi-topic)
 
@@ -484,7 +485,7 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 
 | ID | Item | Type | Blocker? |
 |----|------|------|----------|
-| R4+++ | Snippet-based one-line summary in shortlist (before per-message walkthrough) | UX | no |
+| R4+++ | ~~Snippet-based one-line summary in shortlist (before per-message walkthrough)~~ → **Shipped** | UX | no |
 
 ### Slice: R7 — `cheap` alias for MiniMax via OpenCode Go
 
