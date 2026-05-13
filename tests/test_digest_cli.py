@@ -970,8 +970,12 @@ def test_digest_candidates_json_lists_rows(
         )
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
-    assert len(data) == 1
-    row = data[0]
+    assert data["topic"] == "solo"
+    assert data["file"] == "solo.yaml"
+    assert "query" in data
+    rows = data["rows"]
+    assert len(rows) == 1
+    row = rows[0]
     assert row["id"] == "m1"
     assert row["digest_source_candidate"] is True
     assert row["rfc_message_id"] == "<weekly@example.com>"
@@ -1045,8 +1049,334 @@ def test_digest_candidates_keep_list_kept_true_when_sender_in_keep(
         )
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
-    assert len(data) == 2
-    assert data[0]["sender_key"] == "news@example.com"
-    assert data[0]["keep_list_kept"] is True
-    assert data[1]["sender_key"] == "zed@z.com"
-    assert data[1]["keep_list_kept"] is False
+    rows = data["rows"]
+    assert len(rows) == 2
+    assert rows[0]["sender_key"] == "news@example.com"
+    assert rows[0]["keep_list_kept"] is True
+    assert rows[1]["sender_key"] == "zed@z.com"
+    assert rows[1]["keep_list_kept"] is False
+
+
+def test_digest_candidates_all_empty_topics_dir_skips_gmail(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+
+    td = tmp_path / "cand_all_empty"
+    td.mkdir()
+    keep = tmp_path / "keep_cae.json"
+    keep.write_text("{}", encoding="utf-8")
+    with patch("email_digest.cli.GmailApiBackend.from_env") as from_env:
+        rc = main(
+            [
+                "digest",
+                "candidates",
+                "--all",
+                "--topics-dir",
+                str(td),
+                "--keep-list",
+                str(keep),
+            ]
+        )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == []
+    from_env.assert_not_called()
+
+
+def test_digest_candidates_all_only_config_errors_skips_gmail_and_keep_list(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+
+    td = tmp_path / "cand_all_bad"
+    td.mkdir()
+    (td / "x.yaml").write_text("name: only\n", encoding="utf-8")
+    (td / "y.yaml").write_text("garbage: [\n", encoding="utf-8")
+    keep = tmp_path / "keep_cab.json"
+    keep.write_text("{}", encoding="utf-8")
+    with (
+        patch("email_digest.cli.GmailApiBackend.from_env") as from_env,
+        patch("email_digest.cli.load_keep_list") as lk,
+    ):
+        rc = main(
+            [
+                "digest",
+                "candidates",
+                "--all",
+                "--topics-dir",
+                str(td),
+                "--keep-list",
+                str(keep),
+            ]
+        )
+    assert rc == 1
+    from_env.assert_not_called()
+    lk.assert_not_called()
+    out = json.loads(capsys.readouterr().out)
+    assert len(out) == 2
+    assert all("error" in item for item in out)
+
+
+def test_digest_candidates_all_invalid_since_skips_gmail(tmp_path: Path) -> None:
+    from email_digest.cli import main
+
+    td = tmp_path / "cand_since_all"
+    td.mkdir()
+    with patch("email_digest.cli.GmailApiBackend.from_env") as from_env:
+        rc = main(
+            [
+                "digest",
+                "candidates",
+                "--all",
+                "--since",
+                "bad",
+                "--topics-dir",
+                str(td),
+            ]
+        )
+    assert rc == 2
+    from_env.assert_not_called()
+
+
+def test_digest_candidates_all_strict_mixed_ordered_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R2: sorted *.yaml; success envelope + strict error; one OAuth; exit 1."""
+    from email_digest.cli import main
+    from unsubscribe.gmail_facade import GmailHeaderSummary
+
+    td = tmp_path / "cand_all_mix"
+    td.mkdir()
+    (td / "alpha.yaml").write_text(_minimal_topic_yaml(name="alpha"), encoding="utf-8")
+    (td / "z.yaml").write_text(
+        """
+name: wrong_z
+display_name: "Z"
+senders: ["digest@news.com"]
+window_days: 7
+extract_model: fast
+synthesize_model: smart
+persona_prompt: "p"
+""",
+        encoding="utf-8",
+    )
+    keep = tmp_path / "keep_cam.json"
+    keep.write_text("{}", encoding="utf-8")
+    s = GmailHeaderSummary(
+        id="m1",
+        thread_id="t",
+        from_="News <news@example.com>",
+        subject="Weekly",
+        date="Mon, 1 Jan 2024 00:00:00 +0000",
+        snippet="sn",
+        list_unsubscribe="<https://vendor.example/unsub>",
+        list_unsubscribe_post=None,
+        delivered_to=None,
+        rfc_message_id="<weekly@example.com>",
+    )
+    facade = MagicMock()
+    facade.list_messages.return_value = [s]
+    with (
+        patch("email_digest.cli.GmailApiBackend.from_env", return_value=MagicMock()),
+        patch("email_digest.cli.GmailFacade", return_value=facade),
+    ):
+        rc = main(
+            [
+                "digest",
+                "candidates",
+                "--all",
+                "--strict",
+                "--topics-dir",
+                str(td),
+                "--keep-list",
+                str(keep),
+            ]
+        )
+    assert rc == 1
+    out = json.loads(capsys.readouterr().out)
+    assert len(out) == 2
+    assert out[0]["topic"] == "alpha"
+    assert out[0]["file"] == "alpha.yaml"
+    assert out[0]["rows"][0]["id"] == "m1"
+    assert out[1]["topic"] == "z"
+    assert "strict:" in out[1]["error"]
+    facade.list_messages.assert_called_once()
+
+
+def test_digest_keep_add_remove_roundtrip(tmp_path: Path) -> None:
+    from email_digest.cli import main
+
+    k = tmp_path / "keep_r1.json"
+    assert main(
+        [
+            "digest",
+            "keep",
+            "add",
+            "--from",
+            "Digest <digest@news.com>",
+            "--subject",
+            "Weekly",
+            "--keep-list",
+            str(k),
+        ]
+    ) == 0
+    data = json.loads(k.read_text(encoding="utf-8"))
+    assert data["digest@news.com"]["subject"] == "Weekly"
+    assert main(
+        [
+            "digest",
+            "keep",
+            "remove",
+            "--from",
+            "digest@news.com",
+            "--keep-list",
+            str(k),
+        ]
+    ) == 0
+    assert json.loads(k.read_text(encoding="utf-8")) == {}
+
+
+def test_digest_keep_add_unparseable_from_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+
+    k = tmp_path / "keep_bad.json"
+    rc = main(
+        [
+            "digest",
+            "keep",
+            "add",
+            "--from",
+            "<>",
+            "--subject",
+            "x",
+            "--keep-list",
+            str(k),
+        ]
+    )
+    assert rc == 1
+    assert "from" in capsys.readouterr().err.lower()
+    assert not k.exists() or json.loads(k.read_text(encoding="utf-8")) == {}
+
+
+def test_digest_keep_merge_merges_file(tmp_path: Path) -> None:
+    from email_digest.cli import main
+
+    k = tmp_path / "keep_m.json"
+    k.write_text(
+        json.dumps({"stay@here.com": {"subject": "S", "date_kept": "2020-01-01"}}),
+        encoding="utf-8",
+    )
+    frag = tmp_path / "frag.json"
+    frag.write_text(
+        json.dumps(
+            {
+                "NEW@X.COM": {"subject": "Nx", "date_kept": "2026-02-01"},
+                "stay@here.com": {"subject": "Up", "date_kept": "2026-03-01"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "digest",
+                "keep",
+                "merge",
+                "--file",
+                str(frag),
+                "--keep-list",
+                str(k),
+            ]
+        )
+        == 0
+    )
+    data = json.loads(k.read_text(encoding="utf-8"))
+    assert set(data.keys()) == {"stay@here.com", "new@x.com"}
+    assert data["new@x.com"]["subject"] == "Nx"
+
+
+def test_digest_keep_merge_invalid_json_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+
+    k = tmp_path / "keep_ij.json"
+    k.write_text("{}", encoding="utf-8")
+    bad = tmp_path / "bad.json"
+    bad.write_text("{ not json", encoding="utf-8")
+    rc = main(
+        [
+            "digest",
+            "keep",
+            "merge",
+            "--file",
+            str(bad),
+            "--keep-list",
+            str(k),
+        ]
+    )
+    assert rc == 1
+    assert "json" in capsys.readouterr().err.lower()
+
+
+def test_digest_keep_merge_non_object_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from email_digest.cli import main
+
+    k = tmp_path / "keep_no.json"
+    k.write_text("{}", encoding="utf-8")
+    arr = tmp_path / "arr.json"
+    arr.write_text("[]", encoding="utf-8")
+    rc = main(
+        [
+            "digest",
+            "keep",
+            "merge",
+            "--file",
+            str(arr),
+            "--keep-list",
+            str(k),
+        ]
+    )
+    assert rc == 1
+    assert "object" in capsys.readouterr().err.lower()
+
+
+def test_digest_spark_check_prints_deeplink(capsys: pytest.CaptureFixture[str]) -> None:
+    from email_digest.cli import main
+    from email_digest.spark_link import spark_deeplink
+
+    rc = main(["digest", "spark-check"])
+    assert rc == 0
+    out = capsys.readouterr().out.strip()
+    assert out == spark_deeplink("<spark-device-check@example.com>")
+    assert out.startswith("readdle-spark://openmessage?messageId=")
+
+
+def test_digest_spark_check_custom_message_id(capsys: pytest.CaptureFixture[str]) -> None:
+    from email_digest.cli import main
+    from email_digest.spark_link import spark_deeplink
+
+    rc = main(
+        [
+            "digest",
+            "spark-check",
+            "--message-id",
+            "<hello@world.test>",
+        ]
+    )
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == spark_deeplink("<hello@world.test>")
+
+
+def test_digest_spark_check_whitespace_only_message_id_exits_2(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from email_digest.cli import main
+
+    rc = main(["digest", "spark-check", "--message-id", "   \t  "])
+    assert rc == 2
+    assert "message-id" in capsys.readouterr().err.lower()

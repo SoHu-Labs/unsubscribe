@@ -15,7 +15,8 @@ _TOPICS = Path(__file__).resolve().parent.parent / "topics"
 def test_load_ai_topic() -> None:
     cfg = load_topic_config(_TOPICS / "ai.yaml")
     assert cfg.name == "ai"
-    assert "TODO-your-ai-newsletter@example.com" in cfg.senders
+    assert "briefing@machine-learning-weekly.example.com" in cfg.senders
+    assert "digest@voice-ai-roundup.example.com" in cfg.senders
     assert cfg.window_days == 7
     assert cfg.extract_model == "fast"
     assert cfg.synthesize_model == "smart"
@@ -28,6 +29,14 @@ def test_topic_config_frozen() -> None:
     cfg = load_topic_config(_TOPICS / "health_psy.yaml")
     with pytest.raises(FrozenInstanceError):
         cfg.name = "x"  # type: ignore[misc]
+
+
+def test_repo_topic_yaml_senders_contain_no_todo_prefix() -> None:
+    """R6: shipped topics must not ship ``TODO-`` sender placeholders (regression guard)."""
+    for path in sorted(_TOPICS.glob("*.yaml")):
+        cfg = load_topic_config(path)
+        for s in cfg.senders:
+            assert "todo-" not in s.lower(), f"{path.name}: sender {s!r}"
 
 
 def test_load_missing_file_raises() -> None:

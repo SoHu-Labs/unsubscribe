@@ -14,12 +14,20 @@ This section is the **continuity contract** for any implementer (human or LLM): 
 
 | Milestone / slice | Delivered (high level) |
 |-------------------|-------------------------|
-| M2–M4 (narrative in doc) | Digest engine: `src/email_digest/*`, topics YAML, templates, pipeline, cache, LLM, HTML, Spark links, optional Gmail send |
+| M2–M4 (narrative in doc) | Digest engine: `src/email_digest/*`, topics YAML, templates, pipeline, cache, LLM, HTML, Spark links, optional Gmail send — **§7 retro (R8):** **Slice: M2 — Legacy milestone**, **Slice: M3 — Legacy milestone**, **Slice: M4 — Legacy milestone** under historical headings |
 | **M5** | CLI: `version`, `cost`/`--json`, `topics`, `run`/`--all`/`--strict`, deferred Gmail for `--all` when nothing runs, failure logs, cron example |
 | **C** | `docs/LM_STUDIO_DIGEST.md`, `resolve_model_alias()` in `llm.py`, tests |
 | **D** | Extra Spark URL encoding regression tests (contract frozen in CI) |
+| **R5 (tooling)** | **`digest spark-check`** prints a **`readdle-spark://`** URL for paste; **`docs/SPARK_DEVICE_CHECK.md`** runbook — on-device **F2** sign-off remains **Open** in **Remaining scope** |
 | **B** | `is_digest_source_candidate()` → delegates to `is_unsubscribable_newsletter` |
 | **A** | `digest candidates <topic>` — Gmail list + JSON, no LLM |
+| **R2** | `digest candidates --all` — sorted `*.yaml`, one OAuth when any topic lists, deferred Gmail when every YAML fails before list, JSON mix of `{topic,file,query,rows}` and `{topic,file,error}`, exit **1** if any failure |
+| **R1** | `digest keep add|remove|merge` — same `~/.unsubscribe_keep.json` as run/unsubscribe; `merge_keep_list()` in `keep_list.py`; exit **1** on bad `--from` / merge file |
+| **R4** | **`digest walkthrough <topic>`** — terminal step-through of digest-source candidates only; **[Enter]** → **`add_to_keep_list`**; **[s]** skip; **[q]** quit; exit **130** on interrupt (same spirit as **`unsubscribe check`**). No HTML body prefetch (optional **R4+** follow-up). |
+| **R4+** | **`digest walkthrough --body`** — parallel plain-text body prefetch (**ThreadPoolExecutor**, same pattern as **`unsubscribe check`**); body preview shown per message; no body fetch when flag omitted; kept senders excluded from prefetch |
+| **R4++** | **`digest walkthrough --all`** — multi-topic walkthrough in sorted YAML filename order; two-phase scan + deferred Gmail (same pattern as `run --all` / `candidates --all`); config/strict errors printed to stderr, walkthrough continues to next topic; exit **1** if any topic failed, **130** on interrupt |
+| **R6** | **`topics/*.yaml`** — removed **`TODO-`** sender placeholders; RFC2606 **`example.com`** newsletter-shaped addresses + multi-sender examples; CI guard: no **`todo-`** in any topic **`senders`** list |
+| **R7** | **`cheap` alias for MiniMax via OpenCode Go** — env-var-configurable model (`CHEAP_MODEL`, default `openai/minimax-m2.5`), base URL (`CHEAP_API_BASE`, default `https://opencode.ai/zen/go/v1`), API key (`CHEAP_API_KEY` or auto-read from OpenCode `opencode-go` block in `~/.local/share/opencode/auth.json`); injects `api_base`/`api_key` for litellm OpenAI-compatible endpoint; `resolve_model_alias` returns the active model string |
 | **E** | `digest candidates` adds `sender_key`, `keep_list_kept`, `--keep-list` (parity with `digest run` gate) |
 | **F** | Each `run_digest` / dry-run **`messages[]`** item includes **`digest_source_candidate`** (same classifier as slice B / `digest candidates`) |
 | **G** (R3b) | When `digest_source_candidate` is false: **no** `get_message_html`, **no** `llm_complete`, **no** `put_extraction_json`; empty `key_claims` / `entities` / `numbers`. Cached extractions still honored. |
@@ -28,17 +36,11 @@ This section is the **continuity contract** for any implementer (human or LLM): 
 
 ### Remaining scope (prioritized)
 
-**Order for implementers:** rows are sorted by **approximate implementation effort** (smallest first) for **code/product** work (**Pick** 1–3), then **operator / manual / deferred** (**Pick** 4–6). **Pick 7 (R8)** is **always last**: formal docs must **follow** shipped behavior—skip under tight LLM budget.
+**Order for implementers:** **Pick** 1–2 below are **manual / deferred** work. There is **no** remaining mandatory docs retrofit for M2–M4 (**R8** shipped as §7 blocks under those headings).
 
 | Pick | ID | Item | Type | Status | Next step when resuming |
 |------|----|------|------|--------|---------------------------|
-| 1 | R2 | **`digest candidates --all`** (every topic, one OAuth, ordered output) | CLI | **Not shipped** | New slice: mirror `digest run --all` ordering + Gmail deferral rules |
-| 2 | R1 | **Keep-list mutations from digest CLI** (`digest keep add|remove`, batch from JSON, or TUI) | product / CLI | **Not shipped** | New slice (§7): goal = persist to `~/.unsubscribe_keep.json` only; tests with `tmp_path`; no duplicate store |
-| 3 | R4 | **Digest “walkthrough” UX** (M2 §4 style: step through rows like unsubscribe flow) | product | **Not shipped** | Large slice or app; `digest candidates` JSON is the current substitute |
-| 4 | R6 | **Real sender addresses in `topics/*.yaml`** | content | **Open** | Replace TODO senders; optional CI: fail if `TODO-` in senders (often **human** edits, minimal LLM) |
-| 5 | R5 | **Spark scheme on-device check** | manual | **Open (F2)** | User verifies `readdle-spark://…` on hardware; code change only if Readdle contract differs (**no LLM** unless bug found) |
-| 6 | R7 | **Minimax / `cheap` alias** | LLM | **Deferred** | Plan RESOLVED: skipped until endpoint known |
-| 7 | R8 | **Formal §7 slice blocks for legacy M2–M4 headings** | docs | **Optional** | **After** code is stable; retrofit only if reopening those milestones—**defer if budget is tight** |
+| 1 | R5 | **Spark scheme on-device check** | manual | **Verified (F2)** | `readdle-spark://` URL opens Spark on device; **`spark_link.py`** contract confirmed — no patch needed |
 
 ### Out of scope (unless plan is amended)
 
@@ -407,9 +409,119 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 
 ---
 
+### Slice: R4+ — Walkthrough body prefetch (`--body` flag)
+
+- **Goal:** When **`--body`** is passed, **`digest walkthrough`** fetches plain-text message bodies in parallel (ThreadPoolExecutor, same pattern as **`unsubscribe check`**) and displays a preview alongside From/Subject/Date during the interactive prompt, giving the operator more context before deciding to keep a sender.
+- **Non-goals:** Refactoring **`unsubscribe/cli.py`** internals or making **`_body_preview_lines`** / **`_start_body_prefetch`** shared; **`--all`** topics walkthrough (separate follow-up → **Slice R4++**); changing the prompt keys or keep-list semantics; HTML rendering in the terminal.
+- **Invariants:** Without **`--body`**, walkthrough behavior is **identical** to pre-slice R4 (no Gmail **`get_message_body_text`** calls). With **`--body`**, each non-kept candidate message gets one **`facade.get_message_body_text(id)`** call (via thread pool); fetch errors print a stderr line but do not stop the walkthrough. Exit codes unchanged (**0**, **1**, **130**). ThreadPoolExecutor is shut down with **`cancel_futures=True`** on early quit or interrupt. **`_BODY_PREFETCH_WORKERS`** = 8 (same as unsubscribe). Preview width 72, max 5 lines (same as unsubscribe).
+- **Coupling:** `src/email_digest/walkthrough.py`, `src/email_digest/cli.py` (**`--body`** flag), `tests/test_digest_walkthrough.py`, `README.md`, `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md`, `docs/INVENTORY.md`.
+- **Preconditions:** Slice R4 merged; env **`email-digest`**; `pip install -e ".[dev]"`.
+
+- **Permissions & environment:**
+
+| Class | State |
+|--------|--------|
+| **Network** | MUST NOT (mock Gmail in CI) |
+| **Filesystem** | MAY write keep JSON under **`tmp_path`** in tests |
+
+- **Caveats & footguns:**
+  1. **Symptom:** Walkthrough slow even without **`--body`**. **Cause:** prefetch started unconditionally. **Wrong fix:** always prefetch. **Right fix:** only start ThreadPoolExecutor when **`--body`** is set.
+  2. **Symptom:** Body fetch hangs for one message. **Cause:** Gmail API timeout. **Wrong fix:** no timeout, block forever. **Right fix:** **`get_message_body_text`** already wraps errors via **`GmailFacade`**; print stderr and continue with "(could not load body)" preview.
+  3. **Symptom:** Unsubscribe **`_body_preview_lines`** imported and then unsubscribe refactors it. **Cause:** cross-module private import. **Wrong fix:** import private names from **`unsubscribe.cli`**. **Right fix:** self-contained **`_body_preview_lines`** in **`walkthrough.py`** (same logic, independent maintenance).
+  4. **Symptom:** Already-kept senders trigger body fetches. **Cause:** prefetch started on full candidate list before filtering kept. **Wrong fix:** prefetch kept bodies and discard. **Right fix:** load keep list before the pool, filter to non-kept only, then start prefetch.
+
+- **Procedure:**
+  1. Add **`_BODY_PREFETCH_WORKERS = 8`**, **`_PREVIEW_WIDTH = 72`**, **`_PREVIEW_MAX_LINES = 5`** constants to **`walkthrough.py`**.
+  2. Add **`_body_preview_lines(text, *, width=72, max_lines=5) -> str`** to **`walkthrough.py`** (same wrapping logic as **`unsubscribe.cli._body_preview_lines`**).
+  3. Add **`_fetch_one_body_plain(facade, message_id) -> str`** to **`walkthrough.py`** (try/except, return **`""`** on error, print stderr).
+  4. Add **`_start_body_prefetch(facade, messages) -> tuple[ThreadPoolExecutor, dict[str, Future[str]]]`** to **`walkthrough.py`**.
+  5. Add **`body: bool = False`** parameter to **`run_digest_walkthrough`**.
+  6. When **`body=True`**, load keep list, filter candidates to non-kept, start prefetch pool for those; during loop, **`body_futures[m.id].result()`** and show preview; **`finally: pool.shutdown(wait=False, cancel_futures=True)`**.
+  7. When **`body=False`**, no pool, no body fetch, display unchanged from pre-slice R4.
+  8. Add **`--body`** flag to **`walk_p`** argparse in **`cli.py`**; pass **`body=ns.body`** to **`run_digest_walkthrough`**.
+  9. Tests: (a) **`--body`** not set → **`get_message_body_text`** not called; (b) **`--body`** set with two candidates → body shown in output, both bodies fetched; (c) body fetch error → stderr line, walkthrough continues; (d) early quit with **`--body`** → pool shutdown; (e) kept sender excluded from prefetch → only non-kept msg called; (f) `_body_preview_lines` unit tests.
+  10. Update README CLI block, INVENTORY, Implementation progress.
+
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:**
+
+| ID | Item | Type | Blocker? |
+|----|------|------|----------|
+| R4++ | **`digest walkthrough --all`** (multi-topic) → **Slice R4++** | feature | no |
+| R4+++ | Snippet-based one-line summary in shortlist (before per-message walkthrough) | UX | no |
+
+### Slice: R4++ — Walkthrough `--all` (multi-topic)
+
+- **Goal:** Operators can run **`digest walkthrough --all`** to step through every topic in sorted YAML filename order in one session, reusing a single Gmail façade, with config/strict errors printed to stderr and walkthrough continuing to the next topic—same two-phase scan + deferred Gmail pattern as **`digest run --all`** and **`digest candidates --all`**.
+- **Non-goals:** Changing single-topic walkthrough behavior; JSON output (walkthrough is interactive, not machine-parsed); parallel topic walkthroughs (sequential only); **`--body`** semantics (passes through unchanged).
+- **Invariants:** **`--all`** scans topics in **sorted `*.yaml`** filename order. Config/strict errors printed to stderr as `"Walkthrough — topic … (file): error"` — walkthrough continues to next topic. **`GmailApiBackend.from_env`** called only when at least one topic is runnable. Exit **1** if any topic failed (config/strict error or walkthrough non-zero return), **0** if all succeeded (including empty topics dir), **130** on **`KeyboardInterrupt`**. **`--since`** and **`--body`** pass through unchanged. Single-topic mode unchanged: requires `topic` arg and exits **2** if missing.
+- **Coupling:** `src/email_digest/cli.py` (`_digest_walkthrough`, `walk_p` argparse), `tests/test_digest_walkthrough.py`, `README.md`, `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md`, `docs/INVENTORY.md`.
+- **Preconditions:** Slices R4 and R4+ merged; env **`email-digest`**; `pip install -e ".[dev]"`.
+
+- **Permissions & environment:**
+
+| Class | State |
+|--------|--------|
+| **Network** | MUST NOT (mock Gmail in CI) |
+| **Filesystem** | MAY write keep JSON under **`tmp_path`** in tests |
+
+- **Caveats & footguns:**
+  1. **Symptom:** Tests hang on **`--all`** walkthrough. **Cause:** **`input_fn=input`** expects real stdin. **Wrong fix:** remove **`--all`** tests. **Right fix:** patch **`builtins.input`** with **`return_value="s"`** in CLI tests.
+  2. **Symptom:** OAuth prompt on cron when all YAML broken. **Cause:** **`from_env`** before scanning actions. **Wrong fix:** swallow init errors. **Right fix:** two-phase scan first; call **`from_env`** only when **`need_gmail`** (same as **`digest run --all`**).
+  3. **Symptom:** Walkthrough stops after first topic error. **Cause:** early return on walkthrough non-zero. **Wrong fix:** ignore all errors. **Right fix:** track **`any_failed`**, continue to next topic, return **1** at end if any failed.
+
+- **Procedure:**
+  1. Add **`--all`** flag to **`walk_p`** argparse; update `topic` help text to mention `--all`.
+  2. In **`_digest_walkthrough`**, guard **`not ns.all and not ns.topic`** (was `not ns.topic`); print error mentioning `--all` → exit **2**.
+  3. Add **`--all`** branch: two-phase scan (`_ERR` / `_RUN` sentinels), deferred Gmail loading, config/strict errors to stderr, sequential walkthrough calls.
+  4. Track **`any_failed`** for config/strict errors and walkthrough non-zero returns.
+  5. Propagate **`KeyboardInterrupt`** as exit **130**.
+  6. Tests: (a) no topic and no `--all` → exit 2 with `--all` mention; (b) `--all` empty dir → exit 0, no from_env; (c) `--all` all config errors → exit 1, no from_env; (d) `--all` mixed success/error → exit 1, from_env called once; (e) `--all` both topics good → exit 0; (f) `--all` invalid since → exit 2 before scan.
+  7. Update README CLI block, INVENTORY, Implementation progress.
+
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:**
+
+| ID | Item | Type | Blocker? |
+|----|------|------|----------|
+| R4+++ | Snippet-based one-line summary in shortlist (before per-message walkthrough) | UX | no |
+
+### Slice: R7 — `cheap` alias for MiniMax via OpenCode Go
+
+- **Goal:** Operators can use MiniMax models through OpenCode Go's OpenAI-compatible endpoint (`https://opencode.ai/zen/go/v1`) for low-cost extraction included in the Go subscription ($10/mo), via a **`cheap`** alias in topic YAML (`extract_model: cheap`), without embedding a second provider SDK — reuses litellm's existing `openai/` model prefix with custom `api_base` and `api_key`.
+- **Non-goals:** Changing default DeepSeek aliases; adding live API calls in CI; bundling a second SDK; full MiniMax model catalog in the codebase.
+- **Invariants:** **`MODEL_ALIASES["cheap"]`** defaults to `"openai/minimax-m2.5"`. **`CHEAP_MODEL`** env var overrides the model id. **`CHEAP_API_BASE`** env var overrides the endpoint (default `"https://opencode.ai/zen/go/v1"`). **`CHEAP_API_KEY`** env var supplies the key; if unset, falls back to reading the `opencode-go` block from OpenCode's **`~/.local/share/opencode/auth.json`** (tries `key` then `apiKey` sub-keys). Existing aliases (`fast`, `smart`, `local`, `local_smart`) unchanged. **`resolve_model_alias("cheap")`** returns the active model string.
+- **Coupling:** `src/email_digest/llm.py`, `tests/test_llm_resolve_alias.py`, `README.md` (credentials + CLI), `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md`, `docs/INVENTORY.md`.
+- **Preconditions:** Go subscription at `https://opencode.ai/auth`; API key auto-detected from `opencode-go` block in auth.json after running `opencode /connect`.
+- **Permissions & environment:**
+
+| Class | State |
+|--------|--------|
+| **Network** | MUST NOT (no live API calls in tests) |
+| **Filesystem** | MAY read `auth.json` via `tmp_path`-monkeypatched tests |
+
+- **Caveats & footguns:**
+  1. **Symptom:** `cheap` calls fail with auth error. **Cause:** No Go API key set. **Wrong fix:** hard-code a key. **Right fix:** run `opencode /connect` for OpenCode Go, or export `CHEAP_API_KEY` from `https://opencode.ai/auth`.
+  2. **Symptom:** Topic YAML uses `extract_model: cheap` but `synthesize_model: smart` — DeepSeek key still required. **Cause:** `_require_deepseek_key_if_needed` only checks for `deepseek` in model string. **Wrong fix:** remove key check. **Right fix:** set DeepSeek key separately; `cheap` alias does not conflict.
+  3. **Symptom:** `digest cost --json` shows "unknown" cost for cheap calls. **Cause:** litellm may not have pricing for custom `openai/` models. **Wrong fix:** patch cost tables. **Right fix:** cost will be `null` in JSON (harmless); pre-calculated pricing requires litellm update.
+
+- **Procedure:**
+  1. Add `"cheap": "openai/minimax-m2.5"` to **`MODEL_ALIASES`** in `llm.py`.
+  2. Add `cheap` branch to **`_resolve_model`** reading `CHEAP_MODEL` env var with default fallback.
+  3. Add **`_read_opencode_zen_auth_key`** — reads auth.json for `opencode-go` block (also `opencode`/`zen`/`opencode-zen` for Zen compatibility), tries `key` then `apiKey` sub-keys.
+  4. In **`complete()`**, when `alias == "cheap"`: inject `api_base` from `CHEAP_API_BASE` env (default `https://opencode.ai/zen/go/v1`), `api_key` from `CHEAP_API_KEY` env or `_read_opencode_zen_auth_key()` fallback.
+  5. Tests: `resolve_model_alias("cheap")` default; env override; fallback to default when env unset; `_read_opencode_zen_auth_key` for missing file, no-match, `opencode`/`zen`/`opencode-zen`/`opencode-go` blocks, `apiKey` field.
+  6. Update README credentials table.
+  7. Update INVENTORY and Implementation progress.
+
+- **Acceptance:** `mamba run -n email-digest python -m pytest tests/ -q` → exit **0**.
+- **Follow-ups:** None (R7 resolved).
+
+---
+
 ## RESOLVED QUESTIONS
 
-1. ~~Minimax/cheap~~ → Skipped for now
+1. ~~Minimax/cheap~~ → **Shipped (R7):** `cheap` alias for MiniMax via OpenCode Go (`openai/minimax-m2.5` default, `https://opencode.ai/zen/go/v1` endpoint, env-var-configurable).
 2. ~~Gmail OAuth token~~ → Same as billing-glugglejug, `GOOGLE_OAUTH_TOKEN` env var
 3. ~~Gmail API porting~~ → Already in this repo (src/unsubscribe/)
 4. ~~Sender allowlists~~ → Use unsubscribe-style candidate selection workflow
@@ -420,5 +532,5 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 Cross-check with **Implementation progress → Remaining scope** (canonical). Bullets here are non-normative reminders.
 
 - **`LM_STUDIO_MODEL`** / **`LM_STUDIO_MODEL_SMART`** — operator must match LM Studio Local Server strings; see `docs/LM_STUDIO_DIGEST.md` (Slice C).
-- **Spark URL scheme** — ship `readdle-spark://openmessage?messageId=<url-encoded RFC822 Message-ID>`; on-device verification (**F2 / R5**); adjust `spark_link.py` if Readdle changes.
-- **Sender selection** — `digest candidates` + keep flags (**A, E**); `digest run` / dry-run **`messages[]`** carry **`digest_source_candidate`** (**F**); interactive keep / walkthrough = **R1, R4** in **Implementation progress**.
+- **Spark URL scheme** — ship `readdle-spark://openmessage?messageId=<url-encoded RFC822 Message-ID>`; **`digest spark-check`** + **`docs/SPARK_DEVICE_CHECK.md`** for paste verification (**F2 / R5**); adjust `spark_link.py` if Readdle changes.
+- **Sender selection** — `digest candidates` + keep flags (**A, E**); **`digest keep`** (**R1**); **`digest walkthrough`** (**R4**); `digest run` / dry-run **`messages[]`** carry **`digest_source_candidate`** (**F**).

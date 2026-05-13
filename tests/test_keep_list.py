@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from unsubscribe.keep_list import (
     add_to_keep_list,
     is_kept,
     load_keep_list,
+    merge_keep_list,
     remove_from_keep_list,
     save_keep_list,
     sender_key,
@@ -91,3 +95,49 @@ def test_dedup_by_sender_overwrites_subject(tmp_path: Path) -> None:
     add_to_keep_list(p, "N <n@n.com>", "Second")
     data = json.loads(p.read_text(encoding="utf-8"))
     assert data["n@n.com"]["subject"] == "Second"
+
+
+def test_merge_keep_list_merges_and_lowercases_keys(tmp_path: Path) -> None:
+    p = tmp_path / "k.json"
+    save_keep_list(p, {"old@o.com": {"subject": "O", "date_kept": "2020-01-01"}})
+    merge_keep_list(
+        p,
+        {
+            "NEW@X.COM": {"subject": "Nx", "date_kept": "2026-02-01"},
+            "old@o.com": {"subject": "Updated", "date_kept": "2026-03-01"},
+        },
+    )
+    data = load_keep_list(p)
+    assert set(data.keys()) == {"old@o.com", "new@x.com"}
+    assert data["new@x.com"]["subject"] == "Nx"
+    assert data["old@o.com"]["subject"] == "Updated"
+
+
+def test_merge_keep_list_rejects_non_object_fragment(tmp_path: Path) -> None:
+    p = tmp_path / "k.json"
+    load_keep_list(p)
+    with pytest.raises(TypeError):
+        merge_keep_list(p, [])  # type: ignore[arg-type]
+
+
+def test_merge_keep_list_rejects_bad_value_type(tmp_path: Path) -> None:
+    p = tmp_path / "k.json"
+    load_keep_list(p)
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        merge_keep_list(p, {"a@a.com": "not-an-object"})  # type: ignore[arg-type]
+
+
+def test_merge_keep_list_rejects_empty_key(tmp_path: Path) -> None:
+    p = tmp_path / "k.json"
+    load_keep_list(p)
+    with pytest.raises(ValueError, match="empty sender key"):
+        merge_keep_list(p, {"": {"subject": "x", "date_kept": "2026-01-01"}})
+
+
+def test_merge_keep_list_fills_defaults_for_partial_entry(tmp_path: Path) -> None:
+    p = tmp_path / "k.json"
+    load_keep_list(p)
+    merge_keep_list(p, {"only@k.com": {}})
+    data = load_keep_list(p)
+    assert data["only@k.com"]["subject"] == ""
+    assert data["only@k.com"]["date_kept"] == date.today().isoformat()

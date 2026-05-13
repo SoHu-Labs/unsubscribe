@@ -6,6 +6,7 @@ import json
 from datetime import date
 from email.utils import parseaddr
 from pathlib import Path
+from typing import Any
 
 
 def sender_key(from_header: str) -> str | None:
@@ -58,4 +59,27 @@ def remove_from_keep_list(path: Path, from_header: str) -> None:
         return
     data = load_keep_list(path)
     data.pop(key, None)
+    save_keep_list(path, data)
+
+
+def merge_keep_list(path: Path, fragment: dict[str, Any]) -> None:
+    """Merge *fragment* into the keep file (same schema as ``save_keep_list``).
+
+    Keys are normalized to lowercase. Each value must be a JSON object; missing
+    ``subject`` / ``date_kept`` are filled with ``""`` and today's ISO date.
+    """
+    if not isinstance(fragment, dict):
+        raise TypeError("merge input must be a JSON object")
+    data = load_keep_list(path)
+    today = date.today().isoformat()
+    for k, v in fragment.items():
+        key = str(k).strip().lower()
+        if not key:
+            raise ValueError("empty sender key in merge fragment")
+        if not isinstance(v, dict):
+            raise ValueError(f"value for {key!r} must be a JSON object")
+        data[key] = {
+            "subject": str(v.get("subject", "")),
+            "date_kept": str(v.get("date_kept", today)),
+        }
     save_keep_list(path, data)

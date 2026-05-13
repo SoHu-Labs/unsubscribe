@@ -19,6 +19,10 @@ MODEL_ALIASES: dict[str, str] = {
     # LM Studio: model ids come from env (LM Studio Local Server UI strings).
     "local": "openai/local-model",
     "local_smart": "openai/local-model",
+    # Cheap / MiniMax via OpenCode Go API (OpenAI-compatible endpoint).
+    # Default model minimax-m2.5 is included in the Go subscription ($10/mo).
+    # Endpoint: https://opencode.ai/zen/go/v1 (NOT the Zen endpoint).
+    "cheap": "openai/minimax-m2.5",
 }
 
 
@@ -30,6 +34,8 @@ def _resolve_model(alias: str) -> str:
             "LM_STUDIO_MODEL_SMART",
             os.environ.get("LM_STUDIO_MODEL", MODEL_ALIASES["local_smart"]),
         )
+    if alias == "cheap":
+        return os.environ.get("CHEAP_MODEL", MODEL_ALIASES["cheap"])
     return MODEL_ALIASES.get(alias, alias)
 
 
@@ -66,6 +72,24 @@ def _ensure_deepseek_env_from_opencode() -> None:
     key = read_deepseek_key_from_opencode_auth_files()
     if key:
         os.environ["DEEPSEEK_API_KEY"] = key
+
+
+def _read_opencode_zen_auth_key() -> str | None:
+    """Return Zen API key from OpenCode auth.json (try opencode, zen, opencode-zen, opencode-go)."""
+    path = _opencode_auth_json_path()
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    for block_name in ("opencode", "zen", "opencode-zen", "opencode-go"):
+        block = data.get(block_name)
+        if isinstance(block, dict):
+            key = block.get("key") or block.get("apiKey")
+            if isinstance(key, str) and key.strip():
+                return key.strip()
+    return None
 
 
 def _require_deepseek_key_if_needed(model: str) -> None:
@@ -107,6 +131,20 @@ def complete(
             "LM_STUDIO_BASE_URL", "http://localhost:1234/v1"
         ).rstrip("/")
         kwargs["api_key"] = os.environ.get("LM_STUDIO_API_KEY", "lm-studio")
+
+    if alias == "cheap":
+        kwargs["api_base"] = os.environ.get(
+            "CHEAP_API_BASE", "https://opencode.ai/zen/go/v1"
+        ).rstrip("/")
+        key = os.environ.get("CHEAP_API_KEY", "") or _read_opencode_zen_auth_key() or ""
+        if not key:
+            print(
+                "CHEAP_API_KEY not set. Connect Go with `opencode /connect`, "
+                "or export CHEAP_API_KEY from https://opencode.ai/auth.",
+                file=sys.stderr,
+                flush=True,
+            )
+        kwargs["api_key"] = key
 
     resp = litellm.completion(**kwargs)
     choice = resp.choices[0].message

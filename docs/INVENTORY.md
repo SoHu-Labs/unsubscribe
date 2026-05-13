@@ -11,7 +11,7 @@ This repo was created by merging the former `unsubscribe` project. Gmail API + f
 | `src/unsubscribe/gmail_api_backend.py` | Gmail API: `list_messages`, `get_message_html`, `get_message_body_text`, `get_profile_email`, `send_html_email`, helpers, OAuth (`gmail.readonly` + `gmail.send`), threaded fetch | Both |
 | `src/unsubscribe/gmail_facade.py` | `GmailBackend` Protocol, `GmailFacade` error-wrapping, `GmailHeaderSummary` (Gmail id, RFC822 `Message-ID` when listed, From, Subject, Date, List-Unsubscribe, snippet). | Both |
 | `src/unsubscribe/timed_run.py` | `TimedRun` monotonic progress timer, `format_progress_line` | Both |
-| `src/unsubscribe/keep_list.py` | JSON-based persistent set (`load`, `save`, `add`, `is_kept`) — **same file as unsubscribe** (`~/.unsubscribe_keep.json` by default in `cli.py`); digest uses **inverse semantics** (kept senders = digest sources, not unsubscribe targets). No second persistence file. | Both |
+| `src/unsubscribe/keep_list.py` | JSON persistent set (`load`, `save`, `add`, `remove`, **`merge_keep_list`**, `is_kept`) — **same file as unsubscribe** (`~/.unsubscribe_keep.json` by default in `cli.py`); digest uses **inverse semantics** (kept senders = digest sources, not unsubscribe targets). No second persistence file. | Both |
 | `src/unsubscribe/classifier.py` | `is_unsubscribable_newsletter` / `is_digest_source_candidate` (delegates to the same heuristics; digest `candidates` subcommand). | Both |
 
 ## Digest engine (shipped under `src/email_digest/`)
@@ -20,11 +20,12 @@ Entry points: `python -m email_digest` (`__main__` → `cli.main`), console scri
 
 | File | Purpose |
 |---|---|
-| `cli.py` | `digest` subcommands: `version`, `cost` (human + `--json`), `topics` (`--json`, `--strict`), `candidates` (Gmail list + `digest_source_candidate` + `sender_key` / `keep_list_kept`, no LLM), `run` (`--all`, `--strict`, `--dry-run`, …); passes through `unsubscribe` argv to `unsubscribe.cli` |
+| `cli.py` | `digest` subcommands: `version`, `cost`, `topics`, `candidates` / `candidates --all`, `keep` (`add`/`remove`/`merge`), **`walkthrough`**, **`spark-check`**, `run` (`--all`, …); passes through `unsubscribe` argv |
+| `walkthrough.py` | `run_digest_walkthrough` — topic Gmail list filtered to **`digest_source_candidate`**; terminal prompts; **`add_to_keep_list`** on **[Enter]**; **`--body`** flag enables parallel plain-text body prefetch + preview (ThreadPoolExecutor, same pattern as `unsubscribe check`); **`--all`** in CLI walks every topic in sorted filename order |
 | `pipeline.py` | Orchestrates query → list → keep-list filter → extract (LLM) or empty extraction when not **`digest_source_candidate`** → cache → trending → optional synthesis + HTML + `maybe_email_digest`; each **`messages[]`** item includes **`digest_source_candidate`** |
 | `gmail_query.py` | Builds Gmail `q` strings from topic YAML (`window_days`, senders, folders, `since`) |
 | `config.py` | `TopicConfig` + `load_topic_config` from `topics/<stem>.yaml` |
-| `llm.py` | litellm `complete`, aliases, `resolve_model_alias` (operator diagnostics), optional LLM call logging into SQLite |
+| `llm.py` | litellm `complete`, aliases (`fast`, `smart`, `local`, `local_smart`, `cheap`), `resolve_model_alias` (operator diagnostics), optional LLM call logging into SQLite, `cheap` alias routes via OpenCode Zen OpenAI-compatible endpoint |
 | `cache.py` | SQLite: `extractions`, `embeddings`, `llm_calls`; `cost_report_payload` / rollups for `digest cost --json` |
 | `embed.py` | sentence-transformers embeddings keyed by claim hash |
 | `cluster.py` | HDBSCAN-based trending groups |

@@ -94,7 +94,7 @@ MODEL_ALIASES = {
     # LM Studio (litellm): map "local" / "local_smart" to env-backed OpenAI-compatible model ids
     "local":       os.environ["LM_STUDIO_MODEL"],        # default disk preset: Qwen3.5 4B MLX
     "local_smart": os.environ["LM_STUDIO_MODEL_SMART"], # default disk preset: Qwen3-4B-Instruct
-    # "cheap" / Minimax intentionally omitted — see docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md
+    # "cheap" / Minimax — shipped as R7 via OpenCode Go endpoint (openai/minimax-m2.5, https://opencode.ai/zen/go/v1)
 }
 ```
 
@@ -317,6 +317,6 @@ Ask: "Is the extraction granularity right? Are the trending clusters meaningful,
 1. **Spark URL scheme** — Implement §8 as written; confirm on device when convenient and update `src/email_digest/spark_link.py` + README if Readdle changes the scheme. **Do not block** shipping on hardware verification.
 2. **Email backend** — Use **Gmail API only** (no IMAP). Backend already lives in **`src/unsubscribe/gmail_api_backend.py`** in this repo (merged from unsubscribe); OAuth token path via **`GOOGLE_OAUTH_TOKEN`** env var.
 3. **Local LLM** — LM Studio (OpenAI-compatible API). **Defaults:** **`LM_STUDIO_MODEL`** → Qwen **3.5** **4B** MLX (`mlx-community/Qwen3.5-4B-MLX-4bit` on disk); **`LM_STUDIO_MODEL_SMART`** → Qwen **3** **4B Instruct** (`lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` on disk). Both paths are defined in sibling **`local-chat`** `src/llm.py` (`MODEL_VARIANTS`). Values you put in env vars must still match the **model ids LM Studio’s Local Server** shows (often not identical to folder names).
-4. **Sender allowlists for initial topics** — Chaehan will provide the actual sender list per topic. Ship `ai.yaml` and `health_psy.yaml` with placeholder senders + a TODO comment.
+4. **Sender allowlists for initial topics** — Repo ships **`topics/ai.yaml`** and **`topics/health_psy.yaml`** with multi-sender **`example.com`** patterns (RFC2606); replace locally with real **`From`** addresses (see **`digest candidates`** / **`walkthrough`**). CI rejects **`TODO-`** in **`senders`** lists.
 
 Resolve these before or during M1. Do not block on them — proceed with reasonable defaults and flag in the README.

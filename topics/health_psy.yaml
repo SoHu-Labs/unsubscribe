@@ -1,10 +1,11 @@
 # Health & Psychology topic — Ph.D. psychology lens
-# TODO: Replace placeholder senders with actual health/psy sources
+# Senders: match real From addresses you receive; below use example.com (reserved for docs).
 
 name: health_psy
 display_name: "Health & Psychology — week of {date}"
 senders:
-  - "TODO-your-health-newsletter@example.com"
+  - "newsletter@evidence-based-health.example.com"
+  - "updates@behavioral-science-digest.example.com"
 folders:
   - "INBOX"
 window_days: 7

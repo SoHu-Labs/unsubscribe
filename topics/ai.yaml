@@ -1,10 +1,11 @@
 # AI topic — founder/researcher lens
-# TODO: Replace placeholder senders with actual newsletter/research sources
+# Senders: match real From addresses you receive; below use example.com (reserved for docs).
 
 name: ai
 display_name: "AI Trends — week of {date}"
 senders:
-  - "TODO-your-ai-newsletter@example.com"
+  - "briefing@machine-learning-weekly.example.com"
+  - "digest@voice-ai-roundup.example.com"
 folders:
   - "INBOX"
 window_days: 7
