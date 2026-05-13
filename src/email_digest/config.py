@@ -14,6 +14,7 @@ class TopicConfig:
     name: str
     display_name: str
     senders: tuple[str, ...]
+    keywords: tuple[str, ...]
     folders: tuple[str, ...]
     window_days: int
     extract_model: str
@@ -38,10 +39,14 @@ def load_topic_config(path: Path) -> TopicConfig:
         raise ValueError(f"topic YAML must be a mapping: {path}")
     trending = raw.get("trending") or {}
     output = raw.get("output") or {}
+    keywords_raw = raw.get("keywords", [])
+    if isinstance(keywords_raw, str):
+        keywords_raw = [keywords_raw]
     return TopicConfig(
         name=str(_req(raw, "name")),
         display_name=str(_req(raw, "display_name")),
         senders=tuple(str(x) for x in _req(raw, "senders")),
+        keywords=tuple(str(x) for x in keywords_raw),
         folders=tuple(str(x) for x in raw.get("folders") or ("INBOX",)),
         window_days=int(_req(raw, "window_days")),
         extract_model=str(_req(raw, "extract_model")),

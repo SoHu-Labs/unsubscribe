@@ -98,6 +98,7 @@ def run_digest_walkthrough(
     query = build_digest_gmail_query(
         window_days=cfg.window_days,
         senders=list(cfg.senders),
+        keywords=list(cfg.keywords),
         folders=list(cfg.folders),
         since=since,
     )

@@ -21,11 +21,12 @@ def build_digest_gmail_query(
     *,
     window_days: int,
     senders: list[str],
-    folders: list[str] | None,
+    keywords: list[str] | None = None,
+    folders: list[str] | None = None,
     since: date | None = None,
 ) -> str:
-    if not senders:
-        raise ValueError("senders must be non-empty")
+    if not senders and not keywords:
+        raise ValueError("at least one of senders or keywords must be non-empty")
     parts: list[str] = []
     if since is not None:
         parts.append(f"after:{since.year}/{since.month}/{since.day}")
@@ -44,9 +45,16 @@ def build_digest_gmail_query(
             esc = f.replace("\\", "\\\\").replace('"', '\\"')
             parts.append(f'label:"{esc}"')
 
-    clauses = [sender_pattern_to_from_clause(s) for s in senders]
-    if len(clauses) == 1:
-        parts.append(clauses[0])
+    match_clauses: list[str] = []
+    if senders:
+        sc = [sender_pattern_to_from_clause(s) for s in senders]
+        match_clauses.append("(" + " OR ".join(sc) + ")" if len(sc) > 1 else sc[0])
+    if keywords:
+        kw = [f"({k})" for k in keywords]
+        match_clauses.append("(" + " OR ".join(kw) + ")" if len(kw) > 1 else kw[0])
+
+    if len(match_clauses) == 1:
+        parts.append(match_clauses[0])
     else:
-        parts.append("(" + " OR ".join(clauses) + ")")
+        parts.append("(" + " OR ".join(match_clauses) + ")")
     return " ".join(parts)

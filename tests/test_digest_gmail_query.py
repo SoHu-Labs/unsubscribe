@@ -62,6 +62,31 @@ def test_build_query_non_inbox_folder_adds_label() -> None:
     assert 'label:"AI Newsletters"' in q
 
 
-def test_build_query_empty_senders_raises() -> None:
-    with pytest.raises(ValueError, match="senders"):
+def test_build_query_empty_senders_and_keywords_raises() -> None:
+    with pytest.raises(ValueError, match="senders or keywords"):
         build_digest_gmail_query(window_days=7, senders=[], folders=["INBOX"])
+
+
+def test_build_query_keywords_broadens_search() -> None:
+    q = build_digest_gmail_query(
+        window_days=7,
+        senders=["a@x.com"],
+        keywords=["machine learning", "benchmark"],
+        folders=["INBOX"],
+    )
+    assert "from:a@x.com" in q
+    assert "(machine learning)" in q
+    assert "(benchmark)" in q
+    assert "OR" in q
+
+
+def test_build_query_keywords_without_senders() -> None:
+    q = build_digest_gmail_query(
+        window_days=7,
+        senders=[],
+        keywords=["ai safety", "alignment"],
+        folders=["INBOX"],
+    )
+    assert "(ai safety)" in q
+    assert "(alignment)" in q
+    assert "from:" not in q
