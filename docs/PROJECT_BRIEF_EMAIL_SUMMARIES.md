@@ -32,7 +32,7 @@ Outputs:
 Two initial topics:
 
 - **`ai`** — founder/researcher lens. Priority: local LLMs, voice AI, investable companies and sectors, model benchmarks, genuine research surprises. Skip vibes-only commentary.
-- **`health_psy`** — Ph.D. psychology lens. Skip beginner advice. Integrate cross-source insights. Prefer mechanism-level claims and numbers over self-help framing.
+- **`health`** — Ph.D. psychology lens. Skip beginner advice. Integrate cross-source insights. Prefer mechanism-level claims and numbers over self-help framing.
 
 This codebase is **infrastructure**, not a one-off. Two follow-on projects (an invoice handler and a decision questionnaire) will reuse:
 
@@ -73,7 +73,7 @@ src/email_digest/
   config.py        # YAML topic loader
 topics/
   ai.yaml
-  health_psy.yaml
+  health.yaml
 templates/
   digest.html.j2
 src/unsubscribe/cli.py   # add `digest` subcommand: python -m email_digest digest run …
@@ -236,7 +236,7 @@ If Readdle’s scheme changes (docs or device test), update `src/email_digest/sp
 │       └── ... (existing files unchanged)
 ├── topics/
 │   ├── ai.yaml
-│   └── health_psy.yaml
+│   └── health.yaml
 ├── templates/
 │   └── digest.html.j2
 ├── output/                     # generated reports, gitignored
@@ -317,6 +317,6 @@ Ask: "Is the extraction granularity right? Are the trending clusters meaningful,
 1. **Spark URL scheme** — Implement §8 as written; confirm on device when convenient and update `src/email_digest/spark_link.py` + README if Readdle changes the scheme. **Do not block** shipping on hardware verification.
 2. **Email backend** — Use **Gmail API only** (no IMAP). Backend already lives in **`src/unsubscribe/gmail_api_backend.py`** in this repo (merged from unsubscribe); OAuth token path via **`GOOGLE_OAUTH_TOKEN`** env var.
 3. **Local LLM** — LM Studio (OpenAI-compatible API). **Defaults:** **`LM_STUDIO_MODEL`** → Qwen **3.5** **4B** MLX (`mlx-community/Qwen3.5-4B-MLX-4bit` on disk); **`LM_STUDIO_MODEL_SMART`** → Qwen **3** **4B Instruct** (`lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` on disk). Both paths are defined in sibling **`local-chat`** `src/llm.py` (`MODEL_VARIANTS`). Values you put in env vars must still match the **model ids LM Studio’s Local Server** shows (often not identical to folder names).
-4. **Sender allowlists for initial topics** — Repo ships **`topics/ai.yaml`** and **`topics/health_psy.yaml`** with multi-sender **`example.com`** patterns (RFC2606); replace locally with real **`From`** addresses (see **`digest candidates`** / **`walkthrough`**). CI rejects **`TODO-`** in **`senders`** lists.
+4. **Sender allowlists for initial topics** — Repo ships **`topics/ai.yaml`** and **`topics/health.yaml`** with multi-sender **`example.com`** patterns (RFC2606); replace locally with real **`From`** addresses (see **`digest candidates`** / **`walkthrough`**). CI rejects **`TODO-`** in **`senders`** lists.
 
 Resolve these before or during M1. Do not block on them — proceed with reasonable defaults and flag in the README.

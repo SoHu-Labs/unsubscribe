@@ -80,7 +80,7 @@ src/
     ... (existing files unchanged)
 topics/                       # NEW
   ai.yaml
-  health_psy.yaml
+  health.yaml
 templates/                    # NEW
   digest.html.j2
 tests/
