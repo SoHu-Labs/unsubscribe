@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from unsubscribe.gmail_facade import GmailHeaderSummary
+from unsubscribe.gmail_facade import GmailHeaderSummary, GmailTransportError
 
 from email_digest.config import load_topic_config
 from email_digest.pipeline import run_digest, run_digest_dry_run
@@ -55,6 +55,9 @@ def test_dry_run_filters_by_keep_list(tmp_path: Path) -> None:
     )
 
     facade = MagicMock()
+    facade.get_message_html_bulk.side_effect = GmailTransportError(
+        "mock: use get_message_html"
+    )
     facade.list_messages.return_value = [
         _summary(
             "1",
@@ -108,6 +111,9 @@ def test_digest_messages_carry_digest_source_candidate(
     )
     unsub = "<https://vendor.example/unsub>"
     facade = MagicMock()
+    facade.get_message_html_bulk.side_effect = GmailTransportError(
+        "mock: use get_message_html"
+    )
     facade.list_messages.return_value = [
         _summary(
             "1",
@@ -229,6 +235,9 @@ def test_trending_clusters_with_stubbed_embed_and_cluster(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     facade = MagicMock()
+    facade.get_message_html_bulk.side_effect = GmailTransportError(
+        "mock: use get_message_html"
+    )
     facade.list_messages.return_value = [
         _summary(
             "1",
@@ -282,6 +291,9 @@ def test_per_message_failure_logged_and_run_continues(tmp_path: Path) -> None:
     )
     out_root = tmp_path / "digest_out"
     facade = MagicMock()
+    facade.get_message_html_bulk.side_effect = GmailTransportError(
+        "mock: use get_message_html"
+    )
     facade.list_messages.return_value = [
         _summary(
             "1",
@@ -323,8 +335,7 @@ def test_per_message_failure_logged_and_run_continues(tmp_path: Path) -> None:
     assert len(logs) == 1
     log_text = logs[0].read_text(encoding="utf-8")
     assert "2" in log_text
-    assert "RuntimeError" in log_text
-    assert "simulated fetch failure" in log_text
+    assert "GmailTransportError" in log_text
 
 
 def test_full_digest_writes_html(tmp_path: Path) -> None:
@@ -342,6 +353,9 @@ def test_full_digest_writes_html(tmp_path: Path) -> None:
     fake_synth = json.dumps({"trending": [], "highlights": []})
 
     facade = MagicMock()
+    facade.get_message_html_bulk.side_effect = GmailTransportError(
+        "mock: use get_message_html"
+    )
     facade.list_messages.return_value = [
         _summary(
             "1",

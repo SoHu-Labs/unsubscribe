@@ -19,10 +19,9 @@ from unsubscribe.gmail_facade import GmailHeaderSummary, GmailTransportError
 
 _ENV_OAUTH_TOKEN = "GOOGLE_OAUTH_TOKEN"
 
-_SCOPES = (
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-)
+_SCOPE_GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
+_SCOPE_GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
+_SCOPES = (_SCOPE_GMAIL_READONLY,)  # minimum needed; gmail.send checked lazily at send time
 
 _METADATA_HEADERS = (
     "List-Unsubscribe",
@@ -170,6 +169,26 @@ def plaintext_from_gmail_message_payload(payload: dict) -> str | None:
     return None
 
 
+def _get_message_html_threaded(
+    credentials: Credentials, message_id: str
+) -> tuple[str, str]:
+    """Fetch one message's HTML body (thread-local service).  Returns (message_id, html)."""
+    service = _thread_local_gmail_service(credentials)
+    full = (
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id, format="full")
+        .execute()
+    )
+    payload = full.get("payload") or {}
+    html = html_from_gmail_message_payload(payload)
+    if not html:
+        raise GmailTransportError(
+            f"No text/html part in Gmail message {message_id!r}."
+        )
+    return message_id, html
+
+
 def strip_html_to_text(html: str) -> str:
     """Best-effort HTML → single-line plain text (no external deps)."""
     text = re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
@@ -198,7 +217,7 @@ class GmailApiBackend:
         p = path.expanduser()
         if not p.is_file():
             raise ValueError(f"OAuth token path is not a file: {p}")
-        creds = Credentials.from_authorized_user_file(str(p), scopes=_SCOPES)
+        creds = Credentials.from_authorized_user_file(str(p))
         if not creds.valid:
             if creds.expired and creds.refresh_token:
                 try:
@@ -212,8 +231,8 @@ class GmailApiBackend:
             else:
                 raise ValueError(
                     f"OAuth token missing or invalid ({p}); re-authorize with at least "
-                    "https://www.googleapis.com/auth/gmail.readonly. "
-                    "Add gmail.send if you use digest topics with output.also_email_to."
+                    f"OAuth token missing or invalid ({p}); re-authorize with at least "
+                    f"{_SCOPE_GMAIL_READONLY}."
                 )
         return cls(credentials=creds)
 
@@ -223,7 +242,7 @@ class GmailApiBackend:
         if not raw:
             raise ValueError(
                 f"Set {_ENV_OAUTH_TOKEN} to the authorized-user JSON file from your OAuth flow "
-                "(must include gmail.readonly; add gmail.send if you use digest output.also_email_to)."
+                f"(must include {_SCOPE_GMAIL_READONLY})."
             )
         return cls.from_token_path(Path(raw))
 
@@ -311,6 +330,41 @@ class GmailApiBackend:
         except HttpError as e:
             raise GmailTransportError(f"Gmail API error: {e}") from e
 
+    def get_message_html_bulk(
+        self,
+        message_ids: list[str],
+        *,
+        max_workers: int | None = None,
+    ) -> dict[str, str]:
+        """Fetch full HTML for multiple messages in parallel with thread-local clients.
+
+        Returns ``{message_id: html_body}``.  Missing-HTML messages raise
+        ``GmailTransportError`` (error-tolerant callers should catch per-message).
+
+        *max_workers*: ``None`` auto-scales (capped), ``1`` uses same-thread
+        (mock-friendly for tests / tiny scans).
+        """
+        if not message_ids:
+            return {}
+        n = len(message_ids)
+        configured = max_workers
+        if configured is None:
+            mw = min(_LIST_MESSAGES_MAX_WORKERS_CAP, n)
+        else:
+            mw = max(1, min(configured, n))
+        if mw == 1:
+            return {mid: self.get_message_html(mid) for mid in message_ids}
+        with ThreadPoolExecutor(max_workers=mw) as pool:
+            pairs = list(
+                pool.map(
+                    lambda mid: _get_message_html_threaded(
+                        self._credentials, mid
+                    ),
+                    message_ids,
+                )
+            )
+        return dict(pairs)
+
     def get_profile_email(self) -> str:
         """Authenticated account address (``users.getProfile``)."""
         try:
@@ -328,6 +382,12 @@ class GmailApiBackend:
     def send_html_email(self, *, to: str, subject: str, html: str) -> None:
         """Send a new message via ``users.messages.send`` (RFC822 built locally)."""
         from email.message import EmailMessage
+
+        if _SCOPE_GMAIL_SEND not in self._credentials.scopes:
+            raise ValueError(
+                f"gmail.send scope required for sending; token has {self._credentials.scopes}. "
+                "Re-authorize with gmail.send scope or set output.also_email_to to null."
+            )
 
         from_addr = self.get_profile_email()
         msg = EmailMessage()

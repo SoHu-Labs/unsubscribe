@@ -1,6 +1,6 @@
 # Code Inventory — email-digest
 
-This repo was created by merging the former `unsubscribe` project. Gmail API + façade live in `src/unsubscribe/`; digest email (when enabled) uses the same OAuth token and `users.messages.send`, not SMTP. The digest engine is `src/email_digest/`. Milestone plan: `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md`. **Plan slices** MUST follow `docs/AGENT_PLAN_CONTRACT.md` so handoffs are machine-checkable.
+This repo was created by merging the former `unsubscribe` project. Gmail API + façade live in `src/unsubscribe/`; digest email (when enabled) uses the same OAuth token and `users.messages.send`, not SMTP. The digest engine is `src/email_digest/`. Milestone plan: `docs/IMPLEMENTATION_PLAN_EMAIL_SUMMARIES.md`.
 
 ---
 
@@ -25,7 +25,7 @@ Entry points: `python -m email_digest` (`__main__` → `cli.main`), console scri
 | `pipeline.py` | Orchestrates query → list → keep-list filter → extract (LLM) or empty extraction when not **`digest_source_candidate`** → cache → trending → optional synthesis + HTML + `maybe_email_digest`; each **`messages[]`** item includes **`digest_source_candidate`** |
 | `gmail_query.py` | Builds Gmail `q` strings from topic YAML (`window_days`, senders, folders, `since`) |
 | `config.py` | `TopicConfig` + `load_topic_config` from `topics/<stem>.yaml` |
-| `llm.py` | litellm `complete`, aliases (`fast`, `smart`, `local`, `local_smart`, `cheap`), `resolve_model_alias` (operator diagnostics), optional LLM call logging into SQLite, `cheap` alias routes via OpenCode Zen OpenAI-compatible endpoint |
+| `llm.py` | `complete` (litellm for `fast`/`smart`/`cheap`; direct `mlx_lm` for `local`/`local_smart`), aliases, `resolve_model_alias`, `MLX_MODEL_VARIANTS` (mirrors `local-chat`), LLM call logging into SQLite |
 | `cache.py` | SQLite: `extractions`, `embeddings`, `llm_calls`; `cost_report_payload` / rollups for `digest cost --json` |
 | `embed.py` | sentence-transformers embeddings keyed by claim hash |
 | `cluster.py` | HDBSCAN-based trending groups |
@@ -51,7 +51,7 @@ Entry points: `python -m email_digest` (`__main__` → `cli.main`), console scri
 | Protocol+Facade pattern | billing-glugglejug | `src/googleads_invoice/gmail_facade.py` |
 | DI-based orchestrator | billing-glugglejug | `src/googleads_invoice/run_month.py` |
 | Secret-from-file-or-env | billing-glugglejug | `src/googleads_invoice/cli.py:66-84` |
-| Qwen / LM Studio on-disk model dirs (`~/.lmstudio/models/...`) | local-chat | `src/llm.py` (`MODEL_VARIANTS` — default locals: **`4b`** = Qwen3.5-4B MLX, **`qwen3`** = Qwen3-4B-Instruct) |
+| Qwen / LM Studio on-disk model dirs (`~/.lmstudio/models/...`) | local-chat | `src/llm.py` (`MODEL_VARIANTS` — defaults: **`local`** → `"2b"` (Qwen3.5-2B), **`local_smart`** → `"4b"` (Qwen3.5-4B)) |
 
 ## Performance
 

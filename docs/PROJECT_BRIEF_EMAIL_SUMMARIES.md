@@ -91,19 +91,25 @@ Chaehan explicitly wants provider-swappable LLM with local fallback. Default ali
 MODEL_ALIASES = {
     "fast":  "deepseek/deepseek-v4-flash",   # per-email extraction
     "smart": "deepseek/deepseek-v4-pro",     # final synthesis
-    # LM Studio (litellm): map "local" / "local_smart" to env-backed OpenAI-compatible model ids
-    "local":       os.environ["LM_STUDIO_MODEL"],        # default disk preset: Qwen3.5 4B MLX
-    "local_smart": os.environ["LM_STUDIO_MODEL_SMART"], # default disk preset: Qwen3-4B-Instruct
-    # "cheap" / Minimax — shipped as R7 via OpenCode Go endpoint (openai/minimax-m2.5, https://opencode.ai/zen/go/v1)
+    # local / local_smart: direct MLX (not litellm); mirrors local-chat MODEL_VARIANTS paths
+    "local":        "2b",   # Qwen3.5-2B-MLX-4bit
+    "local_smart":  "4b",   # Qwen3.5-4B-MLX-4bit
+    # "cheap" / Minimax — shipped via OpenCode Go endpoint (openai/minimax-m2.5, https://opencode.ai/zen/go/v1)
+}
+MLX_MODEL_VARIANTS = {
+    "qwen3": "~/.lmstudio/models/lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit",
+    "0.8b":  "~/.lmstudio/models/mlx-community/Qwen3.5-0.8B-MLX-4bit",
+    "2b":    "~/.lmstudio/models/mlx-community/Qwen3.5-2B-MLX-4bit",
+    "4b":    "~/.lmstudio/models/mlx-community/Qwen3.5-4B-MLX-4bit",
 }
 ```
 
-DeepSeek models via DeepSeek API key. LM Studio runs locally with an OpenAI-compatible endpoint (default `http://localhost:1234/v1`, override with `LM_STUDIO_BASE_URL`). **Default local presets** (weights under `~/.lmstudio/models/`, same layout as **`local-chat`** `src/llm.py` → `MODEL_VARIANTS`): **`local`** → **`mlx-community/Qwen3.5-4B-MLX-4bit`**; **`local_smart`** → **`lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit`**. Set **`LM_STUDIO_MODEL`** / **`LM_STUDIO_MODEL_SMART`** to the exact ids LM Studio’s Local Server lists (they may differ from folder names). The provider layer must accept either an alias or a raw model string.
+`fast` and `smart` use litellm → DeepSeek API. `cheap` uses litellm → OpenCode Go proxy (MiniMax M2.5). `local` / `local_smart` bypass litellm entirely and load the Qwen model directly via `mlx_lm` (same lazy-load singleton pattern as `local-chat/src/llm.py`). No env vars needed for local models — paths are hardcoded in the module.
 
 Implementation options, in order of preference:
 
-1. `litellm` — handles Claude, DeepSeek, Ollama with one signature. Recommended default.
-2. A 40-line custom wrapper — only if `litellm` proves heavy or its abstractions leak.
+1. `litellm` — handles DeepSeek, Cheaps with one signature. Used for `fast` / `smart` / `cheap`.
+2. Direct `mlx_lm` — used for `local` / `local_smart` (avoids the LM Studio HTTP server entirely).
 
 Single function signature:
 
@@ -135,8 +141,8 @@ folders:                       # optional Gmail label names (when wired to the A
   - "INBOX"
   - "AI Newsletters"
 window_days: 7
-extract_model: fast            # alias: fast | smart | local (default Qwen3.5 4B via LM_STUDIO_MODEL)
-synthesize_model: smart        # or local_smart (default Qwen3-4B-Instruct via LM_STUDIO_MODEL_SMART)
+extract_model: fast            # alias: fast | smart | local (direct MLX: Qwen3.5-2B)
+synthesize_model: smart        # or local_smart (direct MLX: Qwen3.5-4B)
 persona_prompt: |
   You are summarizing for Chaehan, a working AI founder (Virtual Friend, Delaware
   C-corp) with 4+ years of published AI research. Skip introductory framing.
@@ -245,7 +251,7 @@ If Readdle’s scheme changes (docs or device test), update `src/email_digest/sp
 │   ├── test_spark_link.py      # NEW — digest tests
 │   ├── test_cluster.py         # NEW
 │   └── ... (existing unsubscribe tests unchanged)
-└── src/unsubscribe/cli.py      # MODIFIED: add 'digest' subcommand
+└── src/email_digest/cli.py     # digest commands; pass-through to unsubscribe
 ```
 
 CLI:
@@ -316,7 +322,7 @@ Ask: "Is the extraction granularity right? Are the trending clusters meaningful,
 
 1. **Spark URL scheme** — Implement §8 as written; confirm on device when convenient and update `src/email_digest/spark_link.py` + README if Readdle changes the scheme. **Do not block** shipping on hardware verification.
 2. **Email backend** — Use **Gmail API only** (no IMAP). Backend already lives in **`src/unsubscribe/gmail_api_backend.py`** in this repo (merged from unsubscribe); OAuth token path via **`GOOGLE_OAUTH_TOKEN`** env var.
-3. **Local LLM** — LM Studio (OpenAI-compatible API). **Defaults:** **`LM_STUDIO_MODEL`** → Qwen **3.5** **4B** MLX (`mlx-community/Qwen3.5-4B-MLX-4bit` on disk); **`LM_STUDIO_MODEL_SMART`** → Qwen **3** **4B Instruct** (`lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` on disk). Both paths are defined in sibling **`local-chat`** `src/llm.py` (`MODEL_VARIANTS`). Values you put in env vars must still match the **model ids LM Studio’s Local Server** shows (often not identical to folder names).
+3. **Local LLM** — `local` / `local_smart` use **direct MLX** (`mlx_lm`), not LM Studio HTTP. Models loaded from `~/.lmstudio/models/` with the exact paths in `MLX_MODEL_VARIANTS` (mirrored from sibling `local-chat/src/llm.py`). Defaults: `local` → Qwen3.5-2B, `local_smart` → Qwen3.5-4B. No env vars needed.
 4. **Sender allowlists for initial topics** — Repo ships **`topics/ai.yaml`** and **`topics/health.yaml`** with multi-sender **`example.com`** patterns (RFC2606); replace locally with real **`From`** addresses (see **`digest candidates`** / **`walkthrough`**). CI rejects **`TODO-`** in **`senders`** lists.
 
 Resolve these before or during M1. Do not block on them — proceed with reasonable defaults and flag in the README.

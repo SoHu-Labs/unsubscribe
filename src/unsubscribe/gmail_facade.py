@@ -56,6 +56,12 @@ class GmailBackend(Protocol):
         """Return raw ``text/html`` body."""
         ...
 
+    def get_message_html_bulk(
+        self, message_ids: list[str], *, max_workers: int | None = None
+    ) -> dict[str, str]:
+        """Return ``{message_id: raw text/html body}`` for multiple messages in parallel."""
+        ...
+
     def get_message_body_text(self, message_id: str) -> str:
         """Return plain text (HTML stripped), up to 500 characters."""
         ...
@@ -88,6 +94,18 @@ class GmailFacade:
     def get_message_html(self, message_id: str) -> str:
         try:
             return self._backend.get_message_html(message_id)
+        except GmailTransportError:
+            raise
+        except Exception as e:
+            raise GmailTransportError(str(e)) from e
+
+    def get_message_html_bulk(
+        self, message_ids: list[str], *, max_workers: int | None = None
+    ) -> dict[str, str]:
+        try:
+            return self._backend.get_message_html_bulk(
+                message_ids, max_workers=max_workers
+            )
         except GmailTransportError:
             raise
         except Exception as e:

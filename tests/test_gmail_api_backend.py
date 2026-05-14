@@ -233,7 +233,9 @@ def test_send_html_email_encodes_and_posts_raw(mock_build: MagicMock) -> None:
     mock_service.users.return_value.getProfile.return_value.execute.return_value = {
         "emailAddress": "me@gmail.com",
     }
-    backend = GmailApiBackend(credentials=MagicMock())
+    credentials = MagicMock()
+    credentials.scopes = ["https://www.googleapis.com/auth/gmail.send"]
+    backend = GmailApiBackend(credentials=credentials)
     backend.send_html_email(to="me@gmail.com", subject="Digest", html="<p>Hi</p>")
     send_chain.assert_called_once()
     call_kw = send_chain.call_args.kwargs

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from unsubscribe.gmail_api_backend import strip_html_to_text
-from unsubscribe.gmail_facade import GmailFacade, headers_from_summary
+from unsubscribe.gmail_facade import GmailFacade, GmailTransportError, headers_from_summary
 from unsubscribe.classifier import is_digest_source_candidate
 from unsubscribe.keep_list import load_keep_list, sender_key
 
@@ -145,16 +145,37 @@ def run_digest(
     output_dir = output_dir or (repo_root() / "output")
     run_day_iso = datetime.now(UTC).date().isoformat()
     try:
+        kept_rows: list = []
+        html_map: dict[str, str] = {}
         for m in rows:
             sk = sender_key(m.from_)
             if sk is None or sk not in keep:
                 continue
             if not _keyword_matches(cfg.keywords, m.subject, m.snippet):
                 continue
+            h = headers_from_summary(m)
+            digest_candidate = is_digest_source_candidate(h)
+            cached = get_extraction_json(conn, cfg.name, m.id)
+            if cached is not None or not digest_candidate:
+                kept_rows.append((m, digest_candidate, cached))
+                continue
+            kept_rows.append((m, digest_candidate, None))
+            html_map[m.id] = ""  # placeholder; fetch in bulk below
+
+        if html_map:
+            needs_fetch = list(html_map.keys())
             try:
-                h = headers_from_summary(m)
-                digest_source_candidate = is_digest_source_candidate(h)
-                cached = get_extraction_json(conn, cfg.name, m.id)
+                html_map = facade.get_message_html_bulk(needs_fetch)
+            except Exception:
+                html_map = {}
+                for mid in needs_fetch:
+                    try:
+                        html_map[mid] = facade.get_message_html(mid)
+                    except Exception:
+                        pass
+
+        for m, digest_source_candidate, cached in kept_rows:
+            try:
                 if cached is not None:
                     try:
                         extraction = json.loads(cached)
@@ -167,7 +188,11 @@ def run_digest(
                         "numbers": [],
                     }
                 else:
-                    html = facade.get_message_html(m.id)
+                    html = html_map.get(m.id, "")
+                    if not html:
+                        raise GmailTransportError(
+                            f"No HTML body fetched for {m.id}"
+                        )
                     plain = strip_html_to_text(html)[:_MAX_BODY_CHARS]
                     user = _extraction_user_message(m.subject, plain)
                     raw = llm_complete(
