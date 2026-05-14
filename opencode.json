@@ -16,6 +16,11 @@
       "name": "email-candidates",
       "description": "List Gmail candidates matching a topic",
       "command": "mamba run -n email-digest python -m email_digest digest candidates ${input} --max-results 10"
+    },
+    {
+      "name": "unsub",
+      "description": "Run the unsubscribe check workflow",
+      "command": "mamba run -n email-digest python -m email_digest unsubscribe check"
     }
   ]
 }
