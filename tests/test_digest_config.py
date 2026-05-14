@@ -26,7 +26,7 @@ def test_load_ai_topic() -> None:
 
 
 def test_topic_config_frozen() -> None:
-    cfg = load_topic_config(_TOPICS / "health_psy.yaml")
+    cfg = load_topic_config(_TOPICS / "health.yaml")
     with pytest.raises(FrozenInstanceError):
         cfg.name = "x"  # type: ignore[misc]
 

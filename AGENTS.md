@@ -12,7 +12,7 @@ GOOGLE_OAUTH_TOKEN must point to a valid Gmail API user token at `~/.google/oaut
 
 | Task | Command |
 |------|---------|
-| Dry-run health digest | `mamba run -n email-digest python -m email_digest digest run health_psy --dry-run` |
+| Dry-run health digest | `mamba run -n email-digest python -m email_digest digest run health --dry-run` |
 | Dry-run all topics | `mamba run -n email-digest python -m email_digest digest run --all --dry-run` |
 | List candidates | `mamba run -n email-digest python -m email_digest digest candidates <topic> --max-results 10` |
 | Walkthrough (interactive) | `mamba run -n email-digest python -m email_digest digest walkthrough <topic> [--body]` |
