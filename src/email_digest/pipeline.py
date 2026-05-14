@@ -27,6 +27,14 @@ _EXTRACTION_SYSTEM = (
 _MAX_BODY_CHARS = 12_000
 
 
+def _keyword_matches(keywords: tuple[str, ...], subject: str, snippet: str) -> bool:
+    """Return True if any keyword appears (case-insensitive) in subject or snippet."""
+    if not keywords:
+        return True
+    haystack = f"{subject} {snippet}".lower()
+    return any(k.lower() in haystack for k in keywords)
+
+
 def _append_per_message_failure_log(
     *,
     output_root: Path,
@@ -140,6 +148,8 @@ def run_digest(
         for m in rows:
             sk = sender_key(m.from_)
             if sk is None or sk not in keep:
+                continue
+            if not _keyword_matches(cfg.keywords, m.subject, m.snippet):
                 continue
             try:
                 h = headers_from_summary(m)
