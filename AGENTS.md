@@ -25,10 +25,10 @@ GOOGLE_OAUTH_TOKEN must point to a valid Gmail API user token at `~/.google/oaut
 
 Topics live in `topics/<stem>.yaml`. Each has `senders` (From addresses), optional `keywords` (subject/body search terms), and `extract_model` / `synthesize_model` aliases.
 
-Available model aliases: `fast` (DeepSeek V4 Flash), `smart` (DeepSeek V4 Pro), `local` (LM Studio), `local_smart` (LM Studio), `cheap` (MiniMax M2.5 via OpenCode Go).
+Available model aliases: `fast` (DeepSeek V4 Flash), `smart` (DeepSeek V4 Pro), `local` (Qwen3.5-2B direct MLX), `local_smart` (Qwen3.5-4B direct MLX), `cheap` (MiniMax M2.5 via OpenCode Go).
 
 ## Model routing
 
 - `fast`/`smart` → DeepSeek API (`DEEPSEEK_API_KEY` or auth.json `deepseek.key`)
-- `local`/`local_smart` → LM Studio local endpoint (`LM_STUDIO_BASE_URL`, default `http://localhost:1234/v1`)
+- `local`/`local_smart` → Direct MLX via `mlx_lm` (models loaded from `~/.lmstudio/models/`, mirrored from `local-chat/src/llm.py` `MODEL_VARIANTS`). No env vars.
 - `cheap` → OpenCode Go API (`https://opencode.ai/zen/go/v1`, key from auth.json or `CHEAP_API_KEY`)

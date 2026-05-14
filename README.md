@@ -19,10 +19,7 @@ pip install -e ".[dev]"
 |---|---|---|
 | Google OAuth token (Gmail API) | `GOOGLE_OAUTH_TOKEN` | Path to authorized-user JSON. Must grant **gmail.readonly** (unsubscribe + digest read) and **gmail.send** if you use topic `output.also_email_to` (digest emails yourself). Re-consent if you add `gmail.send` to an older token. |
 | DeepSeek API key | `DEEPSEEK_API_KEY` | For digest LLM extraction/synthesis (`fast` / `smart`). If unset, the CLI also reads `deepseek.key` from `~/.local/share/opencode/auth.json`. Explicit env wins. |
-| LM Studio base URL | `LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` (optional local fallback) |
-| LM Studio model id (fast local, default Qwen3.5 4B) | `LM_STUDIO_MODEL` | Must match LM Studio Local Server; on-disk preset `mlx-community/Qwen3.5-4B-MLX-4bit` (`local-chat` `src/llm.py`) |
-| LM Studio model id (local synthesis, default Qwen3 4B Instruct) | `LM_STUDIO_MODEL_SMART` | Must match LM Studio; on-disk preset `lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit` |
-| LM Studio operator runbook (alias → env → presets) | — | **`docs/LM_STUDIO_DIGEST.md`** |
+| Local LLM (direct MLX via `mlx_lm`) | — | No env vars needed. Models loaded from `~/.lmstudio/models/`. `local` → Qwen3.5-2B, `local_smart` → Qwen3.5-4B. See **`docs/LM_STUDIO_DIGEST.md`** and `src/email_digest/llm.py` (`MLX_MODEL_VARIANTS`). |
 | Cheap / MiniMax API key (for OpenCode Go) | `CHEAP_API_KEY` | Also auto-read from `~/.local/share/opencode/auth.json` (`opencode-go` block). Set up with `opencode /connect` for OpenCode Go, or export the key from [opencode.ai/auth](https://opencode.ai/auth). |
 | Cheap model id override | `CHEAP_MODEL` | Default `openai/minimax-m2.5` (Go plan); set to `openai/minimax-m2.7` for improved quality. |
 | Cheap API base URL | `CHEAP_API_BASE` | Default `https://opencode.ai/zen/go/v1` (Go plan). |

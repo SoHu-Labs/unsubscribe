@@ -101,20 +101,29 @@ Add `litellm` to the existing mamba env and `requirements.txt`.
 ### Step 2: `src/email_digest/llm.py`
 
 ```python
+import mlx_lm
 import litellm
-import os
+
+_MODELS = Path.home() / ".lmstudio" / "models"
+
+MLX_MODEL_VARIANTS = {
+    "qwen3": str(_MODELS / "lmstudio-community" / "Qwen3-4B-Instruct-2507-MLX-4bit"),
+    "0.8b":  str(_MODELS / "mlx-community" / "Qwen3.5-0.8B-MLX-4bit"),
+    "2b":    str(_MODELS / "mlx-community" / "Qwen3.5-2B-MLX-4bit"),
+    "4b":    str(_MODELS / "mlx-community" / "Qwen3.5-4B-MLX-4bit"),
+}
 
 MODEL_ALIASES = {
     "fast":  "deepseek/deepseek-v4-flash",
     "smart": "deepseek/deepseek-v4-pro",
-    # LM Studio (OpenAI-compatible): default local presets — ids from LM Studio UI
-    "local":       os.environ.get("LM_STUDIO_MODEL", "openai/local-model"),       # Qwen3.5 4B MLX on disk
-    "local_smart": os.environ.get("LM_STUDIO_MODEL_SMART", "openai/local-model"),  # Qwen3-4B-Instruct on disk
-    # "cheap" skipped — minimax via opencode endpoint TBD
-    # Anthropic Claude available via auth.json OAuth key
+    # local / local_smart: direct MLX (mirrors local-chat MODEL_VARIANTS).
+    # No env vars — paths are hardcoded from ~/.lmstudio/models/.
+    "local":       "2b",   # Qwen3.5-2B-MLX-4bit
+    "local_smart": "4b",   # Qwen3.5-4B-MLX-4bit
+    "cheap": "openai/minimax-m2.5",   # OpenCode Go endpoint
 }
-# On-disk reference (local-chat src/llm.py): ~/.lmstudio/models/mlx-community/Qwen3.5-4B-MLX-4bit
-# and ~/.lmstudio/models/lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit
+# local/local_smart bypass litellm entirely; fast/smart use DeepSeek API; cheap uses OpenCode Go.
+# Lazy-loaded MLX singleton per variant (see local-chat/src/llm.py for the MlxLlm pattern).
 
 def complete(
     messages: list[dict],
@@ -276,7 +285,7 @@ Canonical rows for **done vs remaining** live in **Implementation progress** at 
 
 | ID | Item | Type | Blocker for next slice? |
 |----|------|------|-------------------------|
-| F1 | LM Studio model id alignment (`LM_STUDIO_MODEL` / `LM_STUDIO_MODEL_SMART`) | env / docs | no |
+| F1 | ~~LM Studio model id alignment~~ → Shipped: direct MLX, no env vars | code | no |
 | F2 | On-device verification of Spark `readdle-spark://` scheme | manual | no |
 | F3 | Sender allowlist UX (`~/.unsubscribe_keep.json`) | product | no |
 
@@ -284,11 +293,11 @@ Canonical rows for **done vs remaining** live in **Implementation progress** at 
 
 Implementation order for digest follow-ups (**smallest scope first**): **Slice C → Slice D → Slice B → Slice A** (each closes or narrows plan follow-ups F1–F3 where noted).
 
-### Slice: C — LM Studio operator runbook + alias resolution surface
+### Slice: C — ~~LM Studio operator runbook~~ → Shipped: direct MLX, see `src/email_digest/llm.py` MLX_MODEL_VARIANTS
 
-- **Goal:** Operators can see exactly which litellm model string digest aliases `local` / `local_smart` resolve to from the environment, without reading `llm.py`; on-disk Qwen presets stay documented as **defaults to aim for**, not hard-coded ids in code.
-- **Non-goals:** Changing default DeepSeek aliases, adding live LM Studio HTTP calls in CI, or auto-detecting LM Studio’s UI model list.
-- **Invariants:** `MODEL_ALIASES` keys `fast`, `smart`, `local`, `local_smart` unchanged; `_resolve_model` / `complete` behavior unchanged; `LM_STUDIO_MODEL` overrides `local`; `LM_STUDIO_MODEL_SMART` overrides `local_smart` with fallback to `LM_STUDIO_MODEL` then default string.
+- **Status:** Shipped. `local` / `local_smart` now load Qwen models directly via `mlx_lm` (matching `local-chat/src/llm.py`). No LM Studio HTTP endpoint, no env vars needed. Model paths are hardcoded in `MLX_MODEL_VARIANTS`.
+- **Goal:** ~~Operators can see exactly which litellm model string digest aliases `local` / `local_smart` resolve to from the environment~~
+- **Invariants:** `MODEL_ALIASES` keys `fast`, `smart`, `local`, `local_smart` unchanged. `local` → `"2b"`, `local_smart` → `"4b"`. `_resolve_model` returns full paths for diagnostics. `complete` behavior unchanged at call site.
 - **Coupling:** `src/email_digest/llm.py`, `docs/LM_STUDIO_DIGEST.md` (new), `README.md` (one link under Credentials), `tests/test_llm_resolve_alias.py` (new).
 - **Preconditions:** M5 merged; env `email-digest`; `pip install -e ".[dev]"`.
 - **Permissions & environment:**
@@ -532,6 +541,6 @@ Implementation order for digest follow-ups (**smallest scope first**): **Slice C
 
 Cross-check with **Implementation progress → Remaining scope** (canonical). Bullets here are non-normative reminders.
 
-- **`LM_STUDIO_MODEL`** / **`LM_STUDIO_MODEL_SMART`** — operator must match LM Studio Local Server strings; see `docs/LM_STUDIO_DIGEST.md` (Slice C).
+- **Local LLM** — `local` / `local_smart` use direct MLX (see `MLX_MODEL_VARIANTS` in `src/email_digest/llm.py`). Defaults: 2B / 4B Qwen3.5 MLX. No env vars.
 - **Spark URL scheme** — ship `readdle-spark://openmessage?messageId=<url-encoded RFC822 Message-ID>`; **`digest spark-check`** + **`docs/SPARK_DEVICE_CHECK.md`** for paste verification (**F2 / R5**); adjust `spark_link.py` if Readdle changes.
 - **Sender selection** — `digest candidates` + keep flags (**A, E**); **`digest keep`** (**R1**); **`digest walkthrough`** (**R4**); `digest run` / dry-run **`messages[]`** carry **`digest_source_candidate`** (**F**).

@@ -216,7 +216,7 @@ If Readdle’s scheme changes (docs or device test), update `src/email_digest/sp
 .
 ├── README.md
 ├── environment.yml             # mamba environment (python=3.12, pip deps)
-├── .env.example                # Gmail API OAuth, DEEPSEEK_API_KEY, LM_STUDIO_*
+├── .env.example                # Gmail API OAuth, DEEPSEEK_API_KEY
 ├── .gitignore                  # output/, cache/, .env, __pycache__/
 ├── docs/
 │   ├── INVENTORY.md            # Code inventory for digest engine
