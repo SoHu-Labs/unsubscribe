@@ -26,7 +26,7 @@ MLX_MODEL_VARIANTS: dict[str, str] = {
 # only the language model portion (vision tower weights are silently skipped).
 _MLX_VLM_KEYS = {"0.8b", "2b", "4b"}
 
-_MLX_DEFAULT = "2b"
+_MLX_DEFAULT = "qwen3"
 
 MODEL_ALIASES: dict[str, str] = {
     "fast": "deepseek/deepseek-v4-flash",
@@ -38,6 +38,10 @@ MODEL_ALIASES: dict[str, str] = {
     # Endpoint: https://opencode.ai/zen/go/v1 (NOT the Zen endpoint).
     "cheap": "openai/minimax-m2.5",
 }
+
+# Aliases that route through the OpenCode Go API (OpenAI-compatible endpoint).
+# fast / smart default to Go API with a user-confirmed fallback to direct DeepSeek.
+_GO_API_ALIASES = frozenset({"fast", "smart", "cheap"})
 
 # Lazy-loaded MLX models (singleton per variant, mirrors local-chat MlxLlm).
 _mlx_models: dict[str, tuple[Any, Any]] = {}
@@ -207,6 +211,34 @@ def _log_mlx_call(
         print(f"(digest: could not log MLX call to SQLite: {e})", file=sys.stderr)
 
 
+def _complete_via_mlx(
+    messages: list[dict[str, Any]],
+    alias: str,
+    *,
+    max_tokens: int,
+    temperature: float,
+    json_mode: bool,
+) -> str:
+    """Run a local MLX model and return its text content."""
+    assert alias in ("local", "local_smart"), f"not an MLX alias: {alias!r}"
+    variant = MODEL_ALIASES[alias]
+    model_path = MLX_MODEL_VARIANTS[variant]
+    content, prompt_tokens, gen_tokens = _mlx_complete(
+        messages,
+        variant=variant,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        json_mode=json_mode,
+    )
+    _log_mlx_call(
+        alias=alias,
+        model=model_path,
+        input_tokens=prompt_tokens,
+        output_tokens=gen_tokens,
+    )
+    return content
+
+
 def complete(
     messages: list[dict[str, Any]],
     alias: str = "smart",
@@ -215,27 +247,15 @@ def complete(
     temperature: float = 0.3,
     json_mode: bool = False,
 ) -> str:
+    """Completion via litellm with Go API routing for fast/smart/cheap and MLX local."""
+    # --- MLX local models -------------------------------------------------------
     if alias in ("local", "local_smart"):
-        variant = MODEL_ALIASES[alias]
-        model_path = MLX_MODEL_VARIANTS[variant]
-        content, prompt_tokens, gen_tokens = _mlx_complete(
-            messages,
-            variant=variant,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            json_mode=json_mode,
+        return _complete_via_mlx(
+            messages, alias,
+            max_tokens=max_tokens, temperature=temperature, json_mode=json_mode,
         )
-        _log_mlx_call(
-            alias=alias,
-            model=model_path,
-            input_tokens=prompt_tokens,
-            output_tokens=gen_tokens,
-        )
-        return content
 
     model = _resolve_model(alias)
-    _ensure_deepseek_env_from_opencode()
-    _require_deepseek_key_if_needed(model)
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -245,21 +265,105 @@ def complete(
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
-    if alias == "cheap":
-        kwargs["api_base"] = os.environ.get(
-            "CHEAP_API_BASE", "https://opencode.ai/zen/go/v1"
-        ).rstrip("/")
-        key = os.environ.get("CHEAP_API_KEY", "") or _read_opencode_zen_auth_key() or ""
-        if not key:
+    # --- OpenCode Go API path (fast, smart, cheap) -------------------------------
+    if alias in _GO_API_ALIASES:
+        go_key = os.environ.get("CHEAP_API_KEY", "") or _read_opencode_zen_auth_key() or ""
+
+        if not go_key and alias in ("fast", "smart"):
+            # No Go API key — skip Go entirely, go direct to DeepSeek.
             print(
-                "CHEAP_API_KEY not set. Connect Go with `opencode /connect`, "
-                "or export CHEAP_API_KEY from https://opencode.ai/auth.",
+                "Go API key not set, using direct DeepSeek API.",
                 file=sys.stderr,
                 flush=True,
             )
-        kwargs["api_key"] = key
+            _ensure_deepseek_env_from_opencode()
+            _require_deepseek_key_if_needed(model)
+            kwargs["api_key"] = os.environ.get("DEEPSEEK_API_KEY", "")
+            resp = litellm.completion(**kwargs)
+        else:
+            # Try the Go API (fast/smart/cheap).
+            kwargs["api_base"] = os.environ.get(
+                "GO_API_BASE", "https://opencode.ai/zen/go/v1"
+            ).rstrip("/")
+            if not go_key:
+                print(
+                    "Go API key not set. Connect Go with `opencode /connect`, "
+                    "or export CHEAP_API_KEY from https://opencode.ai/auth.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            kwargs["api_key"] = go_key
+            try:
+                resp = litellm.completion(**kwargs)
+            except Exception as exc:
+                if alias not in ("fast", "smart", "cheap"):
+                    raise  # unknown alias, no fallback
 
-    resp = litellm.completion(**kwargs)
+                if alias == "cheap":
+                    # cheap → offer local model fallback (default local_smart)
+                    print(
+                        f"\nGo API request failed for cheap ({model}): {exc}",
+                        file=sys.stderr,
+                    )
+                    if sys.stdin.isatty():
+                        answer = input(
+                            "Fall back to local model? [local_smart/local/N]: "
+                        ).strip().lower()
+                    else:
+                        print(
+                            "Non-interactive session — defaulting to local_smart.",
+                            file=sys.stderr,
+                        )
+                        answer = ""
+                    if answer == "local":
+                        fallback_alias = "local"
+                    elif answer in ("local_smart", ""):
+                        fallback_alias = "local_smart"
+                    else:
+                        print("Aborting.", file=sys.stderr)
+                        raise
+                    print(
+                        f"Falling back to {fallback_alias} ("
+                        f"{MLX_MODEL_VARIANTS[MODEL_ALIASES[fallback_alias]]}).",
+                        file=sys.stderr,
+                    )
+                    return _complete_via_mlx(
+                        messages, fallback_alias,
+                        max_tokens=max_tokens, temperature=temperature,
+                        json_mode=json_mode,
+                    )
+
+                # fast / smart: ask user before falling back to direct DeepSeek
+                print(
+                    f"\nGo API request failed for {alias} ({model}): {exc}",
+                    file=sys.stderr,
+                )
+                if sys.stdin.isatty():
+                    answer = input(
+                        "Fall back to direct DeepSeek API? [y/N]: "
+                    ).strip().lower()
+                else:
+                    print(
+                        "Non-interactive session — skipping fallback prompt.",
+                        file=sys.stderr,
+                    )
+                    answer = ""
+                if answer not in ("y", "yes"):
+                    print("Aborting.", file=sys.stderr)
+                    raise
+                print("Falling back to direct DeepSeek API.", file=sys.stderr)
+                # Strip Go API params and switch to direct DeepSeek
+                kwargs.pop("api_base", None)
+                _ensure_deepseek_env_from_opencode()
+                _require_deepseek_key_if_needed(model)
+                kwargs["api_key"] = os.environ.get("DEEPSEEK_API_KEY", "")
+                resp = litellm.completion(**kwargs)
+    else:
+        # --- Direct provider path (DeepSeek or pass-through alias) ---------------
+        _ensure_deepseek_env_from_opencode()
+        _require_deepseek_key_if_needed(model)
+        resp = litellm.completion(**kwargs)
+
     choice = resp.choices[0].message
     content = getattr(choice, "content", None) or ""
     _log_litellm_call(alias=alias, model=model, response=resp)
