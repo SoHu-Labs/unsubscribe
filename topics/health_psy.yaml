@@ -1,7 +1,7 @@
 # Health & Psychology topic — Ph.D. psychology lens
 # Senders: match real From addresses you receive; below use example.com (reserved for docs).
 
-name: health
+name: health_psy
 display_name: "Health & Psychology — week of {date}"
 senders:
   - Melbourne Centre for Behaviour Change <mcbc-psych@unimelb.edu.au>

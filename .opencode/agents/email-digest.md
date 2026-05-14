@@ -17,6 +17,6 @@ You are the Email Digest agent. You have access to these commands:
 **Unsubscribe:**
 - `mamba run -n email-digest python -m email_digest unsubscribe check` — interactive newsletter check
 
-**Topics:** `health`, `ai` (in topics/*.yaml)
+**Topics:** `health_psy`, `ai` (in topics/*.yaml)
 
 When asked to run a digest, execute the command directly. When asked about candidates or cost, run the command and summarize the results. For walkthrough, tell the user to run it manually in a terminal.
