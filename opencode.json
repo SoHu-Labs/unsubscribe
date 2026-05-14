@@ -1,6 +1,5 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "name": "Email Digest",
   "customCommands": [
     {
       "name": "email",
@@ -18,7 +17,7 @@
       "command": "mamba run -n email-digest python -m email_digest digest candidates ${input} --max-results 10"
     },
     {
-      "name": "unsub",
+      "name": "unsubscribe",
       "description": "Run the unsubscribe check workflow",
       "command": "mamba run -n email-digest python -m email_digest unsubscribe check"
     }
