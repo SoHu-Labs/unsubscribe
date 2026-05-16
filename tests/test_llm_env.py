@@ -1,5 +1,4 @@
 """LLM env preflight (DeepSeek key) and OpenCode auth.json fallback."""
-
 from __future__ import annotations
 
 import json
@@ -14,34 +13,34 @@ from email_digest.llm import complete, read_deepseek_key_from_opencode_auth_file
 def test_complete_raises_clear_error_when_deepseek_key_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    monkeypatch.setattr("agentkit.llm._litellm._AUTH_PATH", tmp_path / "nonexistent.json")
+    with pytest.raises(Exception, match="No DeepSeek API key"):
         complete([{"role": "user", "content": "hi"}], alias="fast")
 
 
 def test_read_deepseek_from_opencode_auth_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
-    auth = tmp_path / ".local" / "share" / "opencode"
-    auth.mkdir(parents=True)
-    (auth / "auth.json").write_text(
+    auth = tmp_path / "auth.json"
+    auth.write_text(
         json.dumps({"deepseek": {"type": "api", "key": "sk-from-opencode-json"}}),
         encoding="utf-8",
     )
+    monkeypatch.setattr("email_digest.llm._opencode_auth_json_path", lambda: auth)
     assert read_deepseek_key_from_opencode_auth_files() == "sk-from-opencode-json"
 
 
 def test_complete_uses_opencode_when_env_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    auth = tmp_path / ".local" / "share" / "opencode"
-    auth.mkdir(parents=True)
-    (auth / "auth.json").write_text(
-        json.dumps({"deepseek": {"type": "api", "key": "sk-opencode-for-complete"}}),
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    auth = tmp_path / "auth.json"
+    auth.write_text(
+        json.dumps({"opencode": {"key": "sk-opencode-for-complete"}}),
         encoding="utf-8",
     )
+    monkeypatch.setattr("email_digest.llm._opencode_auth_json_path", lambda: auth)
 
     captured: dict[str, Any] = {}
 
@@ -59,7 +58,7 @@ def test_complete_uses_opencode_when_env_empty(
         captured.update(kwargs)
         return _Resp()
 
-    monkeypatch.setattr("email_digest.llm.litellm.completion", fake_completion)
+    monkeypatch.setattr("agentkit.llm._litellm.litellm.completion", fake_completion)
 
     out = complete([{"role": "user", "content": "hi"}], alias="fast")
     assert out == "ok"
