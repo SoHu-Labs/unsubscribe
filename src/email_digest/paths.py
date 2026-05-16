@@ -5,12 +5,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-
 def repo_root() -> Path:
-    for p in Path(__file__).resolve().parents:
-        if (p / "pyproject.toml").is_file():
-            return p
-    raise RuntimeError("Could not locate repo root (pyproject.toml)")
+    from agentkit.core import repo_root as _repo_root
+    return _repo_root(start=Path(__file__).resolve().parent)
 
 
 def default_cache_db_path() -> Path:
