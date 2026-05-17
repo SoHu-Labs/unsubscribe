@@ -315,4 +315,4 @@ def test_print_unsubscribe_report_outputs_truthful_footer(capsys) -> None:
     assert "confirmed" in text
     assert "server-acknowledged" in text
     assert "Unsubscribed from" not in text
-    assert "saved capture HTML" in text
+    assert "browser" in text

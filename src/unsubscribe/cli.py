@@ -284,6 +284,9 @@ def run_check(
     try:
         print("Fetching inbox from Gmail…", flush=True)
         messages = facade.list_messages(query, max_results=50)
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        return 130
     except Exception as e:
         print(f"Could not list messages: {e}", file=sys.stderr)
         return 1
@@ -497,11 +500,14 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
-    if args.command == "check":
-        backend = GmailApiBackend.from_env()
-        facade = GmailFacade(backend)
-        return run_check(args.days, facade=facade)
-    return 1
+    try:
+        if args.command == "check":
+            backend = GmailApiBackend.from_env()
+            facade = GmailFacade(backend)
+            return run_check(args.days, facade=facade)
+        return 1
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":

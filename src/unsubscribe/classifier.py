@@ -23,6 +23,30 @@ def _transactional(norm: dict[str, str]) -> bool:
         return True
     if subject.startswith("[github") or "[github/" in subject:
         return True
+    if any(
+        kw in subject
+        for kw in (
+            "price alert",
+            "flight alert",
+            "price drop",
+            "price tracking",
+            "calendar invitation",
+            "calendar reminder",
+            "order confirm",
+            "shipping confirm",
+            "purchase confirm",
+            "receipt for",
+            "invoice for",
+            "reset your",
+            "password reset",
+            "verification code",
+            "security code",
+            "sign-in alert",
+            "login alert",
+            "new sign-in",
+        )
+    ):
+        return True
     return False
 
 

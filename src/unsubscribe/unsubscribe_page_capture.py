@@ -360,6 +360,7 @@ class PageCaptureSession:
     def __init__(self, session_dir: Path) -> None:
         self.session_dir = session_dir
         self._seq = 0
+        self._last_content_hash: dict[int, str] = {}
 
     @classmethod
     def create(cls, jobs: list[BrowserJobRow]) -> PageCaptureSession:
@@ -412,7 +413,7 @@ class PageCaptureSession:
         strip_png_from_capture_session_dir(self.session_dir)
 
     def path_to_final_html_for_job(self, job_batch_index: int) -> Path | None:
-        """Path to the **latest** saved ``*.html`` for this job (by snapshot ``sequence``)."""
+        """Path to the **latest** saved ``*.html`` for this job (by snapshot ``sequence``), skipping duplicates."""
 
         man_path = self.session_dir / "manifest.json"
         try:
@@ -426,12 +427,14 @@ class PageCaptureSession:
         ]
         if not snaps:
             return None
-        best = max(snaps, key=lambda s: int(s.get("sequence") or 0))
-        html_name = (best.get("files") or {}).get("html") or ""
-        if not html_name:
-            return None
-        p = self.session_dir / html_name
-        return p if p.is_file() else None
+        for s in sorted(snaps, key=lambda s: int(s.get("sequence") or 0), reverse=True):
+            html_name = (s.get("files") or {}).get("html") or ""
+            if not html_name:
+                continue
+            p = self.session_dir / html_name
+            if p.is_file():
+                return p
+        return None
 
     def record_snapshot(
         self,
@@ -454,9 +457,14 @@ class PageCaptureSession:
         page_url = _current_url(driver)
         title = _title(driver)
         visible_raw = _visible_inner_text_raw(driver)
-        visible_for_file = visible_raw[:_VISIBLE_FILE_MAX_CHARS]
         html_full = _html_snapshot_best_effort(driver)
         html_ex = html_full[:12000] if html_full else ""
+
+        content_hash = hashlib.sha256(html_full.encode("utf-8", errors="replace")).hexdigest()
+        prev_hash = self._last_content_hash.get(job_batch_index)
+        duplicate = prev_hash == content_hash
+        if not duplicate:
+            self._last_content_hash[job_batch_index] = content_hash
 
         norm_for_tags = re.sub(r"\s+", " ", visible_raw).strip()
         text_for_categorize = norm_for_tags[:40000] if norm_for_tags else norm_for_tags
@@ -471,31 +479,38 @@ class PageCaptureSession:
         )
 
         quality_note: str | None = None
-        if len(visible_raw.strip()) < 40 and len(html_full) < 500:
+        if duplicate:
+            quality_note = "duplicate_of_previous_snapshot"
+        elif len(visible_raw.strip()) < 40 and len(html_full) < 500:
             quality_note = (
                 "thin_snapshot: low visible text and small HTML "
                 f"(increase PAGE_CAPTURE_WAIT_S in unsubscribe_page_capture or check iframes)"
             )
 
-        files: dict[str, str] = {
-            "html": f"{stem}.html",
-            "visible_text": f"{stem}.visible.txt",
-        }
-        visible_path = self.session_dir / files["visible_text"]
-        try:
-            visible_path.write_text(visible_for_file, encoding="utf-8")
-        except Exception as exc:
-            logger.warning("Could not save visible text %s: %s", visible_path, exc)
+        files: dict[str, str] = {}
+        if duplicate:
+            prev_stem = f"{self._seq - 1:03d}_job{job_batch_index}_{safe_step}"
+            files["html"] = ""  # no new file; identical to previous snapshot
             files["visible_text"] = ""
+        else:
+            visible_for_file = visible_raw[:_VISIBLE_FILE_MAX_CHARS]
+            files["html"] = f"{stem}.html"
+            files["visible_text"] = f"{stem}.visible.txt"
+            visible_path = self.session_dir / files["visible_text"]
+            try:
+                visible_path.write_text(visible_for_file, encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Could not save visible text %s: %s", visible_path, exc)
+                files["visible_text"] = ""
 
-        html_path = self.session_dir / files["html"]
-        try:
-            html_path.write_text(html_full, encoding="utf-8")
-        except Exception as exc:
-            logger.warning("Could not save capture HTML %s: %s", html_path, exc)
-            files["html"] = ""
+            html_path = self.session_dir / files["html"]
+            try:
+                html_path.write_text(html_full, encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Could not save capture HTML %s: %s", html_path, exc)
+                files["html"] = ""
 
-        if page_capture_include_png():
+        if not duplicate and page_capture_include_png():
             png_name = f"{stem}.png"
             png_path = self.session_dir / png_name
             try:

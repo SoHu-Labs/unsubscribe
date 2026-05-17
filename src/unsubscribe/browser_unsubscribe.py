@@ -82,6 +82,14 @@ def _page_suggests_unsubscribed_confirmed(driver: WebDriver) -> bool:
     return any(m in low for m in _UNSUBSCRIBED_PAGE_MARKERS)
 
 
+def _confirmation_marker_found(text: str) -> str | None:
+    low = normalize_text_for_confirmation_match(text)
+    for m in _UNSUBSCRIBED_PAGE_MARKERS:
+        if m in low:
+            return m
+    return None
+
+
 def _maybe_click_unsubscribe_from_all(driver: WebDriver) -> bool:
     """If the page offers “unsubscribe from all”, click the first visible match."""
     script = """
@@ -104,7 +112,7 @@ def _maybe_click_unsubscribe_from_all(driver: WebDriver) -> bool:
       }
       return t;
     }
-    const sel = 'button, a, label, [role="button"], input[type="radio"], input[type="checkbox"]';
+    const sel = 'button, a, label, [role="button"], input[type="radio"], input[type="checkbox"], span, div';
     for (const el of document.querySelectorAll(sel)) {
       if (!visible(el)) continue;
       const t = textish(el);
@@ -218,6 +226,16 @@ def _find_unsubscribe_element(driver: WebDriver) -> WebElement:
     raise UnsubscribeElementNotFoundError("No unsubscribe control found on the page.")
 
 
+def _normalize_text_snippet(text: str, max_chars: int = 500) -> str | None:
+    t = text.strip()
+    if not t:
+        return None
+    collapsed = " ".join(t.split())
+    if len(collapsed) <= max_chars:
+        return collapsed
+    return collapsed[: max_chars - 3] + "…"
+
+
 def _url_trace_label(url: str) -> str:
     h = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
     try:
@@ -256,6 +274,53 @@ def _click_unsubscribe_once_main_or_iframes(driver: WebDriver) -> None:
     raise UnsubscribeElementNotFoundError(
         "No unsubscribe control found (main document or iframes)."
     )
+
+
+_SUBMIT_BUTTON_TEXT_NEEDLES: tuple[str, ...] = (
+    "update email preferences",
+    "update preferences",
+    "save preferences",
+    "save changes",
+    "submit",
+    "confirm",
+    "update",
+)
+
+
+def _maybe_click_form_submit_button(driver: WebDriver) -> bool:
+    """Click a visible form submit button (e.g. 'Update email preferences' after checking 'unsubscribe from all')."""
+    script = """
+    const needles = arguments[0];
+    function visible(e) {
+      if (!e || !e.getBoundingClientRect) return false;
+      const r = e.getBoundingClientRect();
+      if (r.width < 1 && r.height < 1) return false;
+      const st = window.getComputedStyle(e);
+      if (st.visibility === 'hidden' || st.display === 'none') return false;
+      return true;
+    }
+    function textish(el) {
+      let t = (el.innerText || el.textContent || el.value ||
+        el.getAttribute('aria-label') || '').toLowerCase();
+      return t;
+    }
+    const sel = 'button, input[type="submit"], input[type="button"], [role="button"], a';
+    for (const el of document.querySelectorAll(sel)) {
+      if (!visible(el)) continue;
+      const t = textish(el);
+      for (const n of needles) {
+        if (t.includes(String(n).toLowerCase())) {
+          el.click();
+          return true;
+        }
+      }
+    }
+    return false;
+    """
+    try:
+        return bool(driver.execute_script(script, list(_SUBMIT_BUTTON_TEXT_NEEDLES)))
+    except Exception:
+        return False
 
 
 def _try_click_unsubscribe_on_page(
@@ -305,6 +370,12 @@ def _try_click_unsubscribe_on_page(
         _r("after_secondary_unsubscribe_click")
     except UnsubscribeElementNotFoundError:
         pass
+    time.sleep(min(1.0, settle_s))
+    if _page_suggests_unsubscribed_confirmed(driver):
+        return
+    if _maybe_click_form_submit_button(driver):
+        time.sleep(0.45)
+        _r("after_form_submit_click")
 
 
 def _finalize_browser_results_from_saved_html(
@@ -329,23 +400,28 @@ def _finalize_browser_results_from_saved_html(
         except OSError:
             continue
         confirmed = html_suggests_unsubscribe_confirmation(html)
+        capture_segment = f" [captures: {capture_session.session_dir}]"
         st = row.get("status")
         if st == "failed":
+            row.setdefault("capture_session_path", str(capture_session.session_dir))
             if confirmed:
                 row["detail"] = (
                     f"{row.get('detail', '')} — saved HTML contains confirmation-like wording "
-                    "(page may have settled after the error)."
+                    f"(page may have settled after the error){capture_segment}"
                 )
             continue
         if confirmed:
             row["status"] = "confirmed"
-            row["detail"] = "browser → unsubscribe confirmation found in saved page HTML ✓"
+            row["detail"] = (
+                f"browser → unsubscribe confirmation found in saved page HTML ✓{capture_segment}"
+            )
         else:
             row["status"] = "clicked-no-confirmation"
             row["detail"] = (
                 "browser → saved page HTML has no clear unsubscribe-confirmation wording "
-                "(check inbox or the site)"
+                f"(check inbox or the site){capture_segment}"
             )
+        row.setdefault("capture_session_path", str(capture_session.session_dir))
 
 
 def _result_row(
@@ -356,8 +432,10 @@ def _result_row(
     method: str,
     status: str,
     detail: str,
+    capture_session_path: str | None = None,
+    page_text_snippet: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "email_index": email_index,
         "subject": subject,
         "sender": sender,
@@ -365,6 +443,11 @@ def _result_row(
         "status": status,
         "detail": detail,
     }
+    if capture_session_path:
+        row["capture_session_path"] = capture_session_path
+    if page_text_snippet:
+        row["page_text_snippet"] = page_text_snippet
+    return row
 
 
 def batch_browser_unsubscribe(
@@ -482,7 +565,11 @@ def batch_browser_unsubscribe(
                         initial_url=url,
                         job=job_row,
                     )
+                page_text = _visible_page_text(driver)
+                page_snippet = _normalize_text_snippet(page_text)
+                capture_path = str(capture_session.session_dir) if capture_session else None
                 if _page_suggests_unsubscribed_confirmed(driver):
+                    marker = _confirmation_marker_found(page_text) or "?"
                     results.append(
                         _result_row(
                             email_index,
@@ -490,7 +577,11 @@ def batch_browser_unsubscribe(
                             sender,
                             method="browser",
                             status="confirmed",
-                            detail="browser → unsubscribe confirmation seen on page ✓",
+                            detail=(
+                                f"browser → unsubscribe confirmation seen on page ✓ (\"{marker}\")"
+                            ),
+                            capture_session_path=capture_path,
+                            page_text_snippet=page_snippet,
                         )
                     )
                 else:
@@ -505,6 +596,8 @@ def batch_browser_unsubscribe(
                                 "browser → button clicked → no clear unsubscribe confirmation "
                                 "on page (check inbox or the site)"
                             ),
+                            capture_session_path=capture_path,
+                            page_text_snippet=page_snippet,
                         )
                     )
                 progress.step(
@@ -512,8 +605,10 @@ def batch_browser_unsubscribe(
                 )
             except Exception as exc:
                 logger.warning("Unsubscribe failed for %s: %s", url, exc)
+                page_text = ""
                 if capture_session is not None and driver is not None:
                     try:
+                        page_text = _visible_page_text(driver)
                         capture_session.record_snapshot(
                             driver,
                             job_batch_index=idx,
@@ -525,6 +620,8 @@ def batch_browser_unsubscribe(
                     except Exception:
                         pass
                 msg = str(exc) or type(exc).__name__
+                page_snippet = _normalize_text_snippet(page_text)
+                capture_path = str(capture_session.session_dir) if capture_session else None
                 results.append(
                     _result_row(
                         email_index,
@@ -533,6 +630,8 @@ def batch_browser_unsubscribe(
                         method="browser",
                         status="failed",
                         detail=f"browser → ✗ failed: {msg}",
+                        capture_session_path=capture_path,
+                        page_text_snippet=page_snippet,
                     )
                 )
                 progress.step(

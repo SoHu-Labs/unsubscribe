@@ -69,6 +69,7 @@ def _append_browser_detail_preamble(preamble: str | None, detail: str) -> str:
 def print_unsubscribe_report(results: list[dict[str, Any]]) -> None:
     """Truthful per-email report: never equate POST 2xx with completed unsubscribe."""
     print("\n  ── Results ──\n")
+    capture_paths: set[str] = set()
     for r in results:
         idx = r.get("email_index")
         subj = r.get("subject", "")
@@ -76,6 +77,8 @@ def print_unsubscribe_report(results: list[dict[str, Any]]) -> None:
         method = r.get("method", "")
         status = r.get("status", "")
         detail = str(r.get("detail", ""))
+        page_snippet = str(r.get("page_text_snippet", ""))
+        capture_path = str(r.get("capture_session_path", ""))
 
         if idx is not None:
             head = f'   #{idx}  "{subj}" — {sender}'
@@ -97,6 +100,12 @@ def print_unsubscribe_report(results: list[dict[str, Any]]) -> None:
             # mailto, none, skipped browser, etc.
             print(f"       {detail}")
 
+        if page_snippet:
+            print(f"       page text: {page_snippet}")
+
+        if capture_path:
+            capture_paths.add(capture_path)
+
         print()
 
     n = len(results)
@@ -116,13 +125,10 @@ def print_unsubscribe_report(results: list[dict[str, Any]]) -> None:
         parts.append(f"{n_fail} failed")
     summary = ", ".join(parts) if parts else "no attempts"
     print(f"   ── {n} attempted: {summary} ──")
-    if any(r.get("method") == "browser" for r in results):
-        print(
-            "   Browser URLs: confirmed vs. no-confirmation follows saved capture HTML "
-            "(latest snapshot per job), not the live tab alone.\n"
-        )
-    else:
-        print()
+    if capture_paths:
+        for cp in sorted(capture_paths):
+            print(f"   Page captures: {cp}")
+    print()
 
 
 def debugger_address_from_env() -> str | None:
